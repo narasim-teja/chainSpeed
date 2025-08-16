@@ -8,10 +8,12 @@ import {
   Alert,
   ScrollView,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { usePrivy, useEmbeddedEthereumWallet, getUserEmbeddedEthereumWallet } from '@privy-io/expo';
 import { getSpeedTrackingService } from '../services/SpeedTrackingService';
 import { SpeedRecord } from '../services/LocationService';
 import { CheckpointData } from '../services/MerkleService';
-import { getBlockchainService, BlockchainCheckpoint } from '../services/BlockchainService';
+import { getBlockchainService } from '../services/BlockchainService';
 
 interface TrackingStats {
   currentSpeed: number;
@@ -25,7 +27,15 @@ interface TrackingStats {
   pendingCheckpoints: number;
 }
 
-export default function TrackingScreen() {
+interface TrackingScreenProps {
+  navigation?: any;
+}
+
+export default function TrackingScreen({ navigation }: TrackingScreenProps) {
+  const { user } = usePrivy();
+  const { wallets, create } = useEmbeddedEthereumWallet();
+  const account = getUserEmbeddedEthereumWallet(user);
+  const authenticated = !!user;
   const [stats, setStats] = useState<TrackingStats>({
     currentSpeed: 0,
     maxSpeed: 0,
@@ -52,6 +62,41 @@ export default function TrackingScreen() {
     
     return () => clearInterval(interval);
   }, []);
+
+  // Auto-create wallet for new users
+  useEffect(() => {
+    if (user && !account) {
+      console.log('New user detected, creating wallet automatically...');
+      create();
+    }
+  }, [user, account, create]);
+
+  // Initialize wallet provider when user is authenticated
+  useEffect(() => {
+    const initializeWalletProvider = async () => {
+      if (authenticated && account?.address && wallets.length > 0) {
+        try {
+          console.log('Initializing wallet provider for:', account.address);
+          
+          // Get the wallet provider from Privy embedded wallet
+          const provider = await wallets[0].getProvider();
+          if (provider) {
+            const trackingService = getSpeedTrackingService();
+            await trackingService.initializeWallet(provider);
+            console.log('Wallet provider initialized successfully');
+          } else {
+            console.warn('No wallet provider available');
+          }
+        } catch (error) {
+          console.error('Failed to initialize wallet provider:', error);
+        }
+      } else {
+        console.log('User not authenticated or no wallet available');
+      }
+    };
+
+    initializeWalletProvider();
+  }, [authenticated, account?.address, wallets]);
 
   const updateStats = async () => {
     try {
@@ -92,20 +137,6 @@ export default function TrackingScreen() {
     }
   };
 
-  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 3959; // Earth's radius in miles
-    const dLat = toRadians(lat2 - lat1);
-    const dLon = toRadians(lon2 - lon1);
-    
-    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
-              Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-  };
-
-  const toRadians = (degrees: number): number => degrees * (Math.PI / 180);
 
   const startTracking = async () => {
     try {
@@ -137,48 +168,29 @@ export default function TrackingScreen() {
     }
   };
 
-  const createManualCheckpoint = async () => {
-    try {
-      const trackingService = getSpeedTrackingService();
-      const success = await trackingService.createManualCheckpoint();
-      
-      if (success) {
-        Alert.alert('Success', 'Checkpoint created successfully!');
-        await updateStats();
-      } else {
-        Alert.alert('Info', 'No records available for checkpoint');
-      }
-    } catch (error) {
-      console.error('Failed to create checkpoint:', error);
-      Alert.alert('Error', 'Failed to create checkpoint');
-    }
-  };
 
-  const testAttestation = async () => {
-    try {
-      const trackingService = getSpeedTrackingService();
-      const validation = await trackingService.validateDataIntegrity();
-      
-      if (validation.isValid) {
-        Alert.alert('Data Integrity', 'All data signatures are valid!');
-      } else {
-        Alert.alert(
-          'Data Integrity Issues',
-          `Found ${validation.issues.length} issues:\n` +
-          validation.issues.slice(0, 3).join('\n') +
-          (validation.issues.length > 3 ? '\n...' : '')
-        );
-      }
-    } catch (error) {
-      console.error('Failed to validate data:', error);
-      Alert.alert('Error', 'Failed to validate data integrity');
+  const openProfile = () => {
+    if (navigation) {
+      navigation.push('/profile');
+    } else {
+      // For now, show an alert with basic info
+      Alert.alert(
+        'Profile',
+        'Wallet address and settings will be shown here. Navigate to Profile screen to see full details.'
+      );
     }
   };
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <Text style={styles.title}>ChainSpeed Tracking</Text>
+        {/* Header with title and settings */}
+        <View style={styles.header}>
+          <Text style={styles.title}>ChainSpeed</Text>
+          <TouchableOpacity style={styles.settingsButton} onPress={openProfile}>
+            <Ionicons name="person-circle-outline" size={28} color="#333" />
+          </TouchableOpacity>
+        </View>
 
         {/* Main Speed Display */}
         <View style={styles.speedDisplay}>
@@ -296,12 +308,20 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 20,
   },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 20,
     color: '#333',
+    flex: 1,
+  },
+  settingsButton: {
+    padding: 8,
   },
   speedDisplay: {
     backgroundColor: 'white',

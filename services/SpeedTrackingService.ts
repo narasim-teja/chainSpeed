@@ -1,6 +1,7 @@
 import { LocationService, SpeedRecord } from './LocationService';
 import { getMerkleService } from './MerkleService';
 import { getCryptoService } from './CryptoService';
+import { getBlockchainService } from './BlockchainService';
 import * as Location from 'expo-location';
 
 /**
@@ -296,6 +297,33 @@ class SpeedTrackingServiceClass {
     } catch (error) {
       console.error('Failed to export data:', error);
       return null;
+    }
+  }
+
+  /**
+   * Initialize wallet provider for blockchain transactions
+   */
+  async initializeWallet(provider: any): Promise<void> {
+    try {
+      const blockchainService = getBlockchainService();
+      await blockchainService.setWalletProvider(provider);
+      
+      console.log('Wallet provider initialized for blockchain service');
+      
+      // Try to submit any pending checkpoints after network switch
+      setTimeout(async () => {
+        try {
+          const result = await blockchainService.retryPendingCheckpoints();
+          if (result.submitted > 0) {
+            console.log(`Auto-submitted ${result.submitted} pending checkpoints`);
+          }
+        } catch (error) {
+          console.log('Auto-retry of pending checkpoints failed:', error);
+        }
+      }, 3000); // Wait 3 seconds after wallet init and network switch
+      
+    } catch (error) {
+      console.error('Failed to initialize wallet:', error);
     }
   }
 }

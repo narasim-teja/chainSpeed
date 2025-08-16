@@ -1,4 +1,4 @@
-import { createPublicClient, http } from 'viem';
+import { createPublicClient, createWalletClient, http, custom, defineChain } from 'viem';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CheckpointData } from './MerkleService';
 import { getCryptoService } from './CryptoService';
@@ -18,8 +18,22 @@ export interface BlockchainCheckpoint {
   deviceAttestation: string;
 }
 
+// Define Flow EVM Testnet chain for viem
+const flowEvmTestnet = defineChain({
+  id: FLOW_TESTNET_CONFIG.id,
+  name: FLOW_TESTNET_CONFIG.name,
+  nativeCurrency: FLOW_TESTNET_CONFIG.nativeCurrency,
+  rpcUrls: {
+    default: { http: [FLOW_TESTNET_CONFIG.rpcUrl] },
+  },
+  blockExplorers: {
+    default: { name: 'Flow EVM Testnet Explorer', url: FLOW_TESTNET_CONFIG.blockExplorer },
+  },
+});
+
 class BlockchainServiceClass {
   private publicClient: any;
+  private walletClient: any = null;
   private isConnected = false;
 
   constructor() {
@@ -29,8 +43,132 @@ class BlockchainServiceClass {
   private initializeClients() {
     // Initialize public client for reading data
     this.publicClient = createPublicClient({
+      chain: flowEvmTestnet,
       transport: http(FLOW_TESTNET_CONFIG.rpcUrl),
     });
+  }
+
+  /**
+   * Initialize wallet client with Privy provider
+   */
+  public async setWalletProvider(provider: any) {
+    if (provider) {
+      this.walletClient = createWalletClient({
+        chain: flowEvmTestnet,
+        transport: custom(provider),
+      });
+      console.log('Wallet client initialized with Privy provider and Flow EVM chain');
+      
+      // Try to switch to Flow EVM testnet if not already on it
+      await this.switchToFlowNetwork(provider);
+    }
+  }
+
+  /**
+   * Switch wallet to Flow EVM testnet using Privy's method
+   */
+  private async switchToFlowNetwork(provider: any): Promise<boolean> {
+    try {
+      // Check current chain
+      const currentChainId = await provider.request({ method: 'eth_chainId' });
+      const currentChainIdDecimal = parseInt(currentChainId, 16);
+      
+      console.log('Current wallet chain ID:', currentChainIdDecimal);
+      
+      if (currentChainIdDecimal === FLOW_TESTNET_CONFIG.id) {
+        console.log('Wallet already on Flow EVM testnet');
+        return true;
+      }
+      
+      console.log('Switching wallet to Flow EVM testnet using provider method...');
+      
+      // Use Privy's official method for React Native
+      await provider.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: `0x${FLOW_TESTNET_CONFIG.id.toString(16)}` }], // 0x221 for chain ID 545
+      });
+      
+      console.log('Successfully switched to Flow EVM testnet');
+      return true;
+      
+    } catch (error: any) {
+      console.error('Error switching to Flow network:', error);
+      
+      // If the chain doesn't exist, try to add it first
+      if (error.code === 4902 || error.message?.includes('Unsupported chainId')) {
+        console.log('Flow EVM testnet not recognized, attempting to add it...');
+        
+        try {
+          await provider.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: `0x${FLOW_TESTNET_CONFIG.id.toString(16)}`,
+              chainName: FLOW_TESTNET_CONFIG.name,
+              nativeCurrency: FLOW_TESTNET_CONFIG.nativeCurrency,
+              rpcUrls: [FLOW_TESTNET_CONFIG.rpcUrl],
+              blockExplorerUrls: [FLOW_TESTNET_CONFIG.blockExplorer],
+            }]
+          });
+          
+          console.log('Flow EVM testnet added successfully, now switching...');
+          
+          // Try switching again after adding
+          await provider.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: `0x${FLOW_TESTNET_CONFIG.id.toString(16)}` }],
+          });
+          
+          console.log('Successfully switched to Flow EVM testnet after adding');
+          return true;
+          
+        } catch (addError) {
+          console.error('Failed to add Flow EVM testnet:', addError);
+          console.log('Please ensure Flow EVM testnet is configured in your Privy supportedChains.');
+        }
+      }
+      
+      return false;
+    }
+  }
+
+  /**
+   * Alternative method: Switch using wallet.switchChain if available
+   */
+  public async switchNetworkUsingWallet(wallet: any): Promise<boolean> {
+    try {
+      if (wallet && wallet.switchChain) {
+        console.log('Using wallet.switchChain method...');
+        await wallet.switchChain(FLOW_TESTNET_CONFIG.id); // 545
+        console.log('Successfully switched using wallet.switchChain');
+        return true;
+      } else {
+        console.log('wallet.switchChain not available, trying provider method...');
+        
+        // Fallback to provider method if available
+        if (wallet && wallet.getProvider) {
+          const provider = await wallet.getProvider();
+          return await this.switchToFlowNetwork(provider);
+        }
+        
+        console.log('No switching method available');
+        return false;
+      }
+    } catch (error: any) {
+      console.error('Failed to switch using wallet.switchChain:', error);
+      
+      // If wallet.switchChain fails, try the provider method
+      if (wallet && wallet.getProvider) {
+        console.log('Trying fallback provider method after wallet.switchChain failed...');
+        try {
+          const provider = await wallet.getProvider();
+          return await this.switchToFlowNetwork(provider);
+        } catch (providerError) {
+          console.error('Provider method also failed:', providerError);
+        }
+      }
+      
+      return false;
+    }
   }
 
   async checkConnection(): Promise<boolean> {
@@ -51,9 +189,6 @@ class BlockchainServiceClass {
    */
   async submitCheckpoint(checkpoint: CheckpointData): Promise<string | null> {
     try {
-      // For now, we'll store this locally and submit later when we have Privy integration
-      // This will be the transaction hash when we actually submit to blockchain
-      
       const cryptoService = getCryptoService();
       const deviceAttestation = await cryptoService.getDeviceAttestation();
       
@@ -64,29 +199,104 @@ class BlockchainServiceClass {
       );
 
       // Create blockchain checkpoint format
+      // Ensure merkleRoot is properly formatted as bytes32 (0x + 64 hex chars)
+      const formattedMerkleRoot = checkpoint.merkleRoot.startsWith('0x') 
+        ? checkpoint.merkleRoot 
+        : '0x' + checkpoint.merkleRoot;
+      
+      const formattedAttestation = attestationHash.startsWith('0x')
+        ? attestationHash
+        : '0x' + attestationHash;
+      
+      console.log('Formatting checkpoint for blockchain:', {
+        originalMerkleRoot: checkpoint.merkleRoot,
+        formattedMerkleRoot,
+        merkleRootLength: formattedMerkleRoot.length,
+        originalAttestation: attestationHash,
+        formattedAttestation,
+        attestationLength: formattedAttestation.length,
+        startTime: checkpoint.startTime,
+        endTime: checkpoint.endTime,
+        timeDifference: checkpoint.endTime - checkpoint.startTime,
+        startTimeInSeconds: Math.floor(checkpoint.startTime / 1000),
+        endTimeInSeconds: Math.floor(checkpoint.endTime / 1000),
+        timeDifferenceInSeconds: Math.floor(checkpoint.endTime / 1000) - Math.floor(checkpoint.startTime / 1000),
+      });
+      
+      // Convert timestamps to seconds and ensure endTime > startTime (contract requirement)
+      const startTimeInSeconds = Math.floor(checkpoint.startTime / 1000);
+      const endTimeInSeconds = Math.floor(checkpoint.endTime / 1000);
+      
+      // Ensure endTime is greater than startTime (smart contract validation)
+      const finalEndTime = endTimeInSeconds <= startTimeInSeconds ? startTimeInSeconds + 1 : endTimeInSeconds;
+      
+      if (finalEndTime !== endTimeInSeconds) {
+        console.log('Adjusted endTime to satisfy contract requirement:', {
+          originalEndTime: endTimeInSeconds,
+          adjustedEndTime: finalEndTime,
+          startTime: startTimeInSeconds
+        });
+      }
+      
       const blockchainCheckpoint: BlockchainCheckpoint = {
-        merkleRoot: checkpoint.merkleRoot,
-        startTime: Math.floor(checkpoint.startTime / 1000), // Convert to seconds
-        endTime: Math.floor(checkpoint.endTime / 1000),
-        avgSpeed: checkpoint.avgSpeed,
-        maxSpeed: checkpoint.maxSpeed,
-        minSpeed: checkpoint.minSpeed,
-        distanceMeters: checkpoint.distanceMeters,
-        recordCount: checkpoint.recordCount,
+        merkleRoot: formattedMerkleRoot,
+        startTime: startTimeInSeconds,
+        endTime: finalEndTime,
+        avgSpeed: Math.min(255, Math.max(0, checkpoint.avgSpeed)), // Ensure uint8 range (0-255)
+        maxSpeed: Math.min(255, Math.max(0, checkpoint.maxSpeed)), // Ensure uint8 range (0-255)
+        minSpeed: Math.min(255, Math.max(0, checkpoint.minSpeed)), // Ensure uint8 range (0-255)
+        distanceMeters: Math.min(65535, Math.max(0, checkpoint.distanceMeters)), // Ensure uint16 range (0-65535)
+        recordCount: Math.min(65535, Math.max(0, checkpoint.recordCount)), // Ensure uint16 range (0-65535)
         deviceAddress: '0x0000000000000000000000000000000000000000', // Will be set by contract
-        deviceAttestation: '0x' + attestationHash,
+        deviceAttestation: formattedAttestation,
       };
 
-      // Store checkpoint for later blockchain submission
+      // Try to submit to blockchain if wallet is available
+      if (this.walletClient) {
+        try {
+          // Get the connected account
+          const accounts = await this.walletClient.getAddresses();
+          if (accounts && accounts.length > 0) {
+            const account = accounts[0];
+            
+            // Submit transaction to blockchain
+            const txHash = await this.walletClient.writeContract({
+              address: CONTRACT_CONFIG.address,
+              abi: SPEED_REGISTRY_ABI,
+              functionName: 'submitCheckpoint',
+              args: [blockchainCheckpoint],
+              account,
+            });
+
+            console.log('Checkpoint submitted to blockchain:', {
+              merkleRoot: checkpoint.merkleRoot.substring(0, 8) + '...',
+              txHash: txHash.substring(0, 8) + '...',
+              records: checkpoint.recordCount,
+              timespan: (checkpoint.endTime - checkpoint.startTime) / 1000 + 's'
+            });
+
+            // Remove from pending checkpoints since it's submitted
+            await this.removePendingCheckpoint(blockchainCheckpoint.merkleRoot);
+            
+            return txHash;
+          }
+        } catch (txError) {
+          console.error('Transaction failed, storing as pending:', txError);
+          // Fall through to store as pending
+        }
+      }
+
+      // Store checkpoint for later blockchain submission (wallet not available or tx failed)
       await this.storePendingCheckpoint(blockchainCheckpoint);
 
-      console.log('Checkpoint prepared for blockchain submission:', {
+      console.log('Checkpoint stored as pending:', {
         merkleRoot: checkpoint.merkleRoot.substring(0, 8) + '...',
         timespan: (checkpoint.endTime - checkpoint.startTime) / 1000 + 's',
         records: checkpoint.recordCount,
+        reason: this.walletClient ? 'Transaction failed' : 'No wallet connected'
       });
 
-      // Return a mock transaction hash for now
+      // Return a pending transaction identifier
       return 'pending-' + Date.now().toString();
 
     } catch (error) {
@@ -118,6 +328,98 @@ class BlockchainServiceClass {
     } catch (error) {
       console.error('Failed to get pending checkpoints:', error);
       return [];
+    }
+  }
+
+  private async removePendingCheckpoint(merkleRoot: string): Promise<void> {
+    try {
+      const existing = await AsyncStorage.getItem('pending_checkpoints');
+      const pending: BlockchainCheckpoint[] = existing ? JSON.parse(existing) : [];
+      
+      const filtered = pending.filter(cp => cp.merkleRoot !== merkleRoot);
+      await AsyncStorage.setItem('pending_checkpoints', JSON.stringify(filtered));
+    } catch (error) {
+      console.error('Failed to remove pending checkpoint:', error);
+    }
+  }
+
+  /**
+   * Clear all pending checkpoints (for debugging)
+   */
+  async clearPendingCheckpoints(): Promise<void> {
+    try {
+      await AsyncStorage.setItem('pending_checkpoints', JSON.stringify([]));
+      console.log('All pending checkpoints cleared');
+    } catch (error) {
+      console.error('Failed to clear pending checkpoints:', error);
+    }
+  }
+
+  /**
+   * Retry submitting all pending checkpoints
+   */
+  async retryPendingCheckpoints(): Promise<{ submitted: number; failed: number }> {
+    let submitted = 0;
+    let failed = 0;
+
+    try {
+      if (!this.walletClient) {
+        console.log('No wallet available for retrying pending checkpoints');
+        return { submitted, failed };
+      }
+
+      const accounts = await this.walletClient.getAddresses();
+      if (!accounts || accounts.length === 0) {
+        console.log('No accounts available for retrying pending checkpoints');
+        return { submitted, failed };
+      }
+
+      const account = accounts[0];
+      const pendingCheckpoints = await this.getPendingCheckpoints();
+
+      console.log(`Retrying ${pendingCheckpoints.length} pending checkpoints...`);
+
+      for (const checkpoint of pendingCheckpoints) {
+        try {
+          // Debug the checkpoint format before submission
+          console.log('About to submit checkpoint:', {
+            merkleRoot: checkpoint.merkleRoot,
+            merkleRootLength: checkpoint.merkleRoot.length,
+            deviceAttestation: checkpoint.deviceAttestation,
+            attestationLength: checkpoint.deviceAttestation.length,
+            startTime: checkpoint.startTime,
+            endTime: checkpoint.endTime,
+          });
+
+          const txHash = await this.walletClient.writeContract({
+            address: CONTRACT_CONFIG.address,
+            abi: SPEED_REGISTRY_ABI,
+            functionName: 'submitCheckpoint',
+            args: [checkpoint],
+            account,
+          });
+
+          console.log('Retry: Checkpoint submitted to blockchain:', {
+            merkleRoot: checkpoint.merkleRoot.substring(0, 10) + '...',
+            txHash: txHash.substring(0, 10) + '...',
+          });
+
+          await this.removePendingCheckpoint(checkpoint.merkleRoot);
+          submitted++;
+
+        } catch (txError) {
+          console.error('Retry: Failed to submit checkpoint:', txError);
+          console.error('Failed checkpoint data:', checkpoint);
+          failed++;
+        }
+      }
+
+      console.log(`Retry completed: ${submitted} submitted, ${failed} failed`);
+      return { submitted, failed };
+
+    } catch (error) {
+      console.error('Failed to retry pending checkpoints:', error);
+      return { submitted, failed };
     }
   }
 

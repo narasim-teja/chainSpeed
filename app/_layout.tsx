@@ -8,6 +8,7 @@ import {
   Inter_600SemiBold,
 } from "@expo-google-fonts/inter";
 import { useFonts } from "expo-font";
+import { FLOW_TESTNET_CONFIG } from "../constants/Blockchain";
 
 export default function RootLayout() {
   useFonts({
@@ -19,9 +20,29 @@ export default function RootLayout() {
     <PrivyProvider
       appId={Constants.expoConfig?.extra?.privyAppId}
       clientId={Constants.expoConfig?.extra?.privyClientId}
+      supportedChains={[
+        {
+          id: FLOW_TESTNET_CONFIG.id,
+          name: FLOW_TESTNET_CONFIG.name,
+          network: FLOW_TESTNET_CONFIG.name.toLowerCase().replace(/\s+/g, '-'),
+          nativeCurrency: FLOW_TESTNET_CONFIG.nativeCurrency,
+          rpcUrls: {
+            default: {
+              http: [FLOW_TESTNET_CONFIG.rpcUrl],
+            },
+          },
+          blockExplorers: {
+            default: {
+              name: 'Flow EVM Testnet Explorer',
+              url: FLOW_TESTNET_CONFIG.blockExplorer,
+            },
+          },
+        },
+      ]}
     >
       <Stack>
-        <Stack.Screen name="index" />
+        <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="profile" options={{ headerShown: false }} />
       </Stack>
       <PrivyElements />
     </PrivyProvider>

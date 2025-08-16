@@ -263,19 +263,19 @@ class LocationServiceClass {
       
       // Check if GPS provides speed
       if (location.coords.speed !== null && location.coords.speed !== undefined) {
-        speed = location.coords.speed * 2.237; // Convert m/s to mph
+        speed = Math.max(0, location.coords.speed * 2.237); // Convert m/s to mph, ensure non-negative
       } else if (this.previousRecord) {
         // Calculate speed from position change
         const timeDiff = Date.now() - this.previousRecord.timestamp;
         if (timeDiff > 0) {
-          speed = this.calculateSpeedFromCoordinates(
+          speed = Math.max(0, this.calculateSpeedFromCoordinates(
             this.previousRecord.latitude,
             this.previousRecord.longitude,
             this.previousRecord.timestamp,
             location.coords.latitude,
             location.coords.longitude,
             Date.now()
-          );
+          )); // Ensure non-negative
         }
       }
 

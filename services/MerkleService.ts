@@ -69,10 +69,16 @@ class MerkleServiceClass {
       const stats = this.calculateStats(this.pendingRecords);
 
       // Create checkpoint data
+      const firstRecordTime = this.pendingRecords[0].timestamp;
+      const lastRecordTime = this.pendingRecords[this.pendingRecords.length - 1].timestamp;
+      
+      // Ensure endTime is always greater than startTime (smart contract requirement)
+      const endTime = lastRecordTime === firstRecordTime ? firstRecordTime + 1000 : lastRecordTime; // Add 1 second if they're equal
+      
       const checkpointData: Omit<CheckpointData, 'signature'> = {
         merkleRoot: merkleTree.hash,
-        startTime: this.pendingRecords[0].timestamp,
-        endTime: this.pendingRecords[this.pendingRecords.length - 1].timestamp,
+        startTime: firstRecordTime,
+        endTime: endTime,
         avgSpeed: stats.avgSpeed,
         maxSpeed: stats.maxSpeed,
         minSpeed: stats.minSpeed,
@@ -181,6 +187,17 @@ class MerkleServiceClass {
     const maxSpeed = Math.max(...speeds);
     const minSpeed = Math.min(...speeds);
 
+    // Debug negative speeds
+    const negativeSpeedCount = speeds.filter(s => s < 0).length;
+    if (negativeSpeedCount > 0) {
+      console.warn(`Found ${negativeSpeedCount} negative speeds in checkpoint`, {
+        minSpeed,
+        avgSpeed,
+        maxSpeed,
+        speedRange: [Math.min(...speeds), Math.max(...speeds)]
+      });
+    }
+
     // Calculate distance using GPS coordinates
     let totalDistance = 0;
     for (let i = 1; i < records.length; i++) {
@@ -193,10 +210,10 @@ class MerkleServiceClass {
     }
 
     return {
-      avgSpeed: Math.round(avgSpeed),
-      maxSpeed: Math.round(maxSpeed),
-      minSpeed: Math.round(minSpeed),
-      distance: Math.round(totalDistance * 1609.34) // Convert miles to meters
+      avgSpeed: Math.max(0, Math.round(avgSpeed)), // Ensure non-negative
+      maxSpeed: Math.max(0, Math.round(maxSpeed)), // Ensure non-negative
+      minSpeed: Math.max(0, Math.round(minSpeed)), // Ensure non-negative
+      distance: Math.max(0, Math.round(totalDistance * 1609.34)) // Convert miles to meters, ensure non-negative
     };
   }
 
