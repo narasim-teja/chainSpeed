@@ -19,7 +19,12 @@
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
-        }
+        },
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "ChainSpeed needs location access to record your driving speed for legal protection against false speeding tickets.",
+        "NSLocationWhenInUseUsageDescription": "ChainSpeed needs location access to record your driving speed for legal protection against false speeding tickets.",
+        "NSLocationAlwaysUsageDescription": "ChainSpeed needs background location access to continuously record your driving speed even when the app is not active.",
+        "NSMotionUsageDescription": "ChainSpeed uses motion sensors to verify and validate GPS speed readings for enhanced accuracy.",
+        "UIBackgroundModes": ["location", "background-fetch", "background-processing"]
       }
     },
     "android": {
@@ -27,7 +32,15 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "dev.privy.example"
+      "package": "dev.privy.example",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "ACTIVITY_RECOGNITION",
+        "WAKE_LOCK",
+        "RECEIVE_BOOT_COMPLETED"
+      ]
     },
     "extra": {
       "privyAppId": "cmedwf4cd001vk10c4a8imp1r",
@@ -49,7 +62,11 @@
         }
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-location",
+      "expo-sensors",
+      "expo-task-manager",
+      "expo-background-fetch"
     ],
     "experiments": {
       "typedRoutes": true

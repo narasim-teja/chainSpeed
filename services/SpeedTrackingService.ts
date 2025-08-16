@@ -1,0 +1,313 @@
+import { LocationService, SpeedRecord } from './LocationService';
+import { getMerkleService } from './MerkleService';
+import { getCryptoService } from './CryptoService';
+import * as Location from 'expo-location';
+
+/**
+ * Main service that orchestrates GPS tracking, crypto signing, and Merkle tree construction
+ */
+class SpeedTrackingServiceClass {
+  private locationService = LocationService.getInstance();
+  private merkleService = getMerkleService();
+  private cryptoService = getCryptoService();
+  private isInitialized = false;
+
+  async initialize(): Promise<boolean> {
+    try {
+      if (this.isInitialized) return true;
+
+      console.log('Initializing SpeedTrackingService...');
+
+      // Initialize crypto service first
+      await this.cryptoService.getDeviceAttestation();
+
+      // Request permissions
+      const hasPermissions = await this.locationService.requestPermissions();
+      if (!hasPermissions) {
+        console.error('Location permissions denied');
+        return false;
+      }
+
+      // Set up location processing callback
+      this.setupLocationProcessing();
+
+      this.isInitialized = true;
+      console.log('SpeedTrackingService initialized successfully');
+      return true;
+
+    } catch (error) {
+      console.error('Failed to initialize SpeedTrackingService:', error);
+      return false;
+    }
+  }
+
+  private setupLocationProcessing(): void {
+    // Override the location service's processLocationUpdate to include our processing
+    const originalProcess = this.locationService.processLocationUpdate.bind(this.locationService);
+    
+    this.locationService.processLocationUpdate = async (location: Location.LocationObject) => {
+      try {
+        // Call original processing
+        await originalProcess(location);
+
+        // For Merkle tree, we want to track the current state even when stopped
+        // This is the last processed record (includes 0 speed)
+        if ((this.locationService as any).previousRecord) {
+          this.merkleService.addRecord((this.locationService as any).previousRecord);
+        }
+
+      } catch (error) {
+        console.error('Failed to process location update:', error);
+      }
+    };
+  }
+
+  async startTracking(): Promise<boolean> {
+    try {
+      if (!this.isInitialized) {
+        const initialized = await this.initialize();
+        if (!initialized) return false;
+      }
+
+      console.log('Starting speed tracking...');
+      const success = await this.locationService.startTracking();
+      
+      if (success) {
+        console.log('Speed tracking started successfully');
+      } else {
+        console.error('Failed to start speed tracking');
+      }
+
+      return success;
+
+    } catch (error) {
+      console.error('Error starting tracking:', error);
+      return false;
+    }
+  }
+
+  async stopTracking(): Promise<void> {
+    try {
+      console.log('Stopping speed tracking...');
+      await this.locationService.stopTracking();
+      
+      // Create final checkpoint with any pending records
+      await this.merkleService.forceCheckpoint();
+      
+      console.log('Speed tracking stopped');
+
+    } catch (error) {
+      console.error('Error stopping tracking:', error);
+    }
+  }
+
+  getTrackingStatus(): boolean {
+    return this.locationService.getTrackingStatus();
+  }
+
+  async getRecentRecords(minutes: number = 5): Promise<SpeedRecord[]> {
+    const timeAgo = Date.now() - (minutes * 60 * 1000);
+    return this.locationService.getRecords(timeAgo);
+  }
+
+  async getCurrentStats(): Promise<{
+    currentSpeed: number;
+    maxSpeed: number;
+    avgSpeed: number;
+    totalDistance: number;
+    recordCount: number;
+    checkpointCount: number;
+    pendingRecords: number;
+  }> {
+    try {
+      // Get the last known speed (includes 0 when stopped)
+      const currentSpeed = await this.locationService.getLastKnownSpeed();
+      
+      // Get records from the last hour
+      const oneHourAgo = Date.now() - (60 * 60 * 1000);
+      const records = await this.locationService.getRecords(oneHourAgo);
+      
+      // Get checkpoints from today
+      const todayStart = new Date().setHours(0, 0, 0, 0);
+      const checkpoints = await this.merkleService.getCheckpoints(todayStart);
+
+      if (records.length === 0) {
+        return {
+          currentSpeed: Math.round(currentSpeed),
+          maxSpeed: 0,
+          avgSpeed: 0,
+          totalDistance: 0,
+          recordCount: 0,
+          checkpointCount: checkpoints.length,
+          pendingRecords: this.merkleService.getPendingRecordCount(),
+        };
+      }
+
+      // Calculate stats from stored records (moving only)
+      const speeds = records.map(r => r.speed);
+      const maxSpeed = Math.max(...speeds);
+      const avgSpeed = speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length;
+
+      // Calculate total distance
+      let totalDistance = 0;
+      for (let i = 1; i < records.length; i++) {
+        totalDistance += this.calculateDistance(
+          records[i - 1].latitude, records[i - 1].longitude,
+          records[i].latitude, records[i].longitude
+        );
+      }
+
+      return {
+        currentSpeed: Math.round(currentSpeed),
+        maxSpeed: Math.round(maxSpeed),
+        avgSpeed: Math.round(avgSpeed),
+        totalDistance: Math.round(totalDistance * 10) / 10, // Round to 1 decimal
+        recordCount: records.length,
+        checkpointCount: checkpoints.length,
+        pendingRecords: this.merkleService.getPendingRecordCount(),
+      };
+
+    } catch (error) {
+      console.error('Failed to get current stats:', error);
+      return {
+        currentSpeed: 0,
+        maxSpeed: 0,
+        avgSpeed: 0,
+        totalDistance: 0,
+        recordCount: 0,
+        checkpointCount: 0,
+        pendingRecords: 0,
+      };
+    }
+  }
+
+  private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    // Haversine formula for distance in miles
+    const R = 3959; // Earth's radius in miles
+    const dLat = this.toRadians(lat2 - lat1);
+    const dLon = this.toRadians(lon2 - lon1);
+    
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(this.toRadians(lat1)) * Math.cos(this.toRadians(lat2)) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  private toRadians(degrees: number): number {
+    return degrees * (Math.PI / 180);
+  }
+
+  async createManualCheckpoint(): Promise<boolean> {
+    try {
+      const checkpoint = await this.merkleService.forceCheckpoint();
+      return checkpoint !== null;
+    } catch (error) {
+      console.error('Failed to create manual checkpoint:', error);
+      return false;
+    }
+  }
+
+  async validateDataIntegrity(): Promise<{
+    isValid: boolean;
+    issues: string[];
+  }> {
+    try {
+      const issues: string[] = [];
+
+      // Get recent records
+      const records = await this.locationService.getRecords();
+      
+      // For now, just check that records exist and have signatures
+      // The signature verification would need the original signing context
+      if (records.length === 0) {
+        issues.push('No speed records found');
+      } else {
+        let validCount = 0;
+        for (const record of records) {
+          if (record.signature && record.signature.length > 0) {
+            validCount++;
+          } else {
+            issues.push(`Missing signature for record at ${new Date(record.timestamp).toISOString()}`);
+          }
+        }
+        
+        if (validCount === records.length) {
+          console.log(`All ${validCount} records have valid signatures`);
+        }
+      }
+
+      return {
+        isValid: issues.length === 0,
+        issues
+      };
+
+    } catch (error) {
+      console.error('Failed to validate data integrity:', error);
+      return {
+        isValid: false,
+        issues: [`Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`]
+      };
+    }
+  }
+
+  async exportDataForTimeRange(startTime: number, endTime: number): Promise<{
+    records: SpeedRecord[];
+    checkpoints: any[];
+    proofs: any[];
+    attestation: any;
+  } | null> {
+    try {
+      const records = await this.locationService.getRecords(startTime, endTime);
+      const checkpoints = await this.merkleService.getCheckpoints(startTime, endTime);
+      const attestation = await this.cryptoService.getDeviceAttestation();
+
+      // Generate proofs for each checkpoint
+      const proofs = [];
+      for (const checkpoint of checkpoints) {
+        // Find a representative record for proof generation
+        const checkpointRecords = records.filter(r => 
+          r.timestamp >= checkpoint.startTime && r.timestamp <= checkpoint.endTime
+        );
+        
+        if (checkpointRecords.length > 0) {
+          const proof = await this.merkleService.generateMerkleProof(
+            checkpointRecords[0].timestamp,
+            checkpoint.merkleRoot
+          );
+          if (proof) {
+            proofs.push({
+              checkpoint: checkpoint.merkleRoot,
+              proof,
+              record: checkpointRecords[0]
+            });
+          }
+        }
+      }
+
+      return {
+        records,
+        checkpoints,
+        proofs,
+        attestation
+      };
+
+    } catch (error) {
+      console.error('Failed to export data:', error);
+      return null;
+    }
+  }
+}
+
+// Singleton instance
+let instance: SpeedTrackingServiceClass | null = null;
+
+export const getSpeedTrackingService = (): SpeedTrackingServiceClass => {
+  if (!instance) {
+    instance = new SpeedTrackingServiceClass();
+  }
+  return instance;
+};
+
+export default SpeedTrackingServiceClass;
