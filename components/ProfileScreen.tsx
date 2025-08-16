@@ -7,12 +7,18 @@ import {
   SafeAreaView,
   Alert,
   ScrollView,
+  Modal,
+  ActivityIndicator,
+  FlatList,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { usePrivy, useEmbeddedEthereumWallet, getUserEmbeddedEthereumWallet } from '@privy-io/expo';
 import { useRouter } from 'expo-router';
 import { getBlockchainService } from '../services/BlockchainService';
+import { getSpeedTrackingService } from '../services/SpeedTrackingService';
+import { getMerkleService } from '../services/MerkleService';
 import { CONTRACT_CONFIG } from '../constants/Blockchain';
 
 interface ProfileScreenProps {
@@ -27,6 +33,23 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
   const router = useRouter();
   const [pendingCheckpoints, setPendingCheckpoints] = useState(0);
   const [networkInfo, setNetworkInfo] = useState<any>(null);
+  
+  // Speed Proof Query states
+  const [showProofModal, setShowProofModal] = useState(false);
+  const [availableRecords, setAvailableRecords] = useState<any[]>([]);
+  const [availableCheckpoints, setAvailableCheckpoints] = useState<any[]>([]);
+  const [isLoadingData, setIsLoadingData] = useState(false);
+  
+  // Date/Time picker states
+  const [startDate, setStartDate] = useState(new Date());
+  const [endDate, setEndDate] = useState(new Date());
+  const [showDateTimePicker, setShowDateTimePicker] = useState(false);
+  const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
+  const [pickerType, setPickerType] = useState<'start' | 'end'>('start');
+  const [tempDate, setTempDate] = useState(new Date());
+  
+  const [isGeneratingProof, setIsGeneratingProof] = useState(false);
+  const [proofResult, setProofResult] = useState<any>(null);
 
   useEffect(() => {
     loadProfileData();
@@ -101,19 +124,209 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
     return 'No wallet connected';
   };
 
-  const openTestnetFaucet = () => {
-    Alert.alert(
-      'Get Testnet FLOW',
-      'To get testnet FLOW tokens:\n\n1. Copy your wallet address\n2. Visit the Flow testnet faucet\n3. Paste your address and request tokens',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Copy Address', 
-          onPress: () => copyToClipboard(getWalletAddress(), 'Wallet address')
-        }
-      ]
-    );
+  const openDateTimePicker = (type: 'start' | 'end', mode: 'date' | 'time') => {
+    const currentDate = type === 'start' ? startDate : endDate;
+    setTempDate(new Date(currentDate));
+    setPickerType(type);
+    setPickerMode(mode);
+    setShowDateTimePicker(true);
   };
+
+  const handleDateTimeChange = (event: any, selectedDate?: Date) => {
+    if (selectedDate) {
+      setTempDate(selectedDate);
+    }
+  };
+
+  const confirmDateTimeSelection = () => {
+    if (pickerType === 'start') {
+      setStartDate(new Date(tempDate));
+    } else {
+      setEndDate(new Date(tempDate));
+    }
+    setShowDateTimePicker(false);
+  };
+
+  const cancelDateTimeSelection = () => {
+    setShowDateTimePicker(false);
+  };
+
+  const loadAvailableData = async () => {
+    try {
+      setIsLoadingData(true);
+      
+      const speedTrackingService = getSpeedTrackingService();
+      const merkleService = getMerkleService();
+      
+      // Get records from the last 30 days
+      const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+      const records = await speedTrackingService.exportDataForTimeRange(thirtyDaysAgo, Date.now());
+      
+      if (records) {
+        setAvailableRecords(records.records || []);
+        setAvailableCheckpoints(records.checkpoints || []);
+        
+        // Set default date range to cover available data
+        if (records.records && records.records.length > 0) {
+          const firstRecord = records.records[0];
+          const lastRecord = records.records[records.records.length - 1];
+          setStartDate(new Date(firstRecord.timestamp));
+          setEndDate(new Date(lastRecord.timestamp));
+        }
+      }
+      
+      console.log('Loaded available data:', {
+        records: records?.records?.length || 0,
+        checkpoints: records?.checkpoints?.length || 0,
+        dateRange: records && records.records && records.records.length > 0 ? {
+          from: new Date(records.records[0]!.timestamp).toISOString(),
+          to: new Date(records.records[records.records.length - 1]!.timestamp).toISOString()
+        } : 'No data'
+      });
+      
+    } catch (error) {
+      console.error('Failed to load available data:', error);
+      Alert.alert('Error', 'Failed to load available data');
+    } finally {
+      setIsLoadingData(false);
+    }
+  };
+
+  const generateSpeedProof = async () => {
+    try {
+      setIsGeneratingProof(true);
+      setProofResult(null);
+
+      const startTime = startDate.getTime();
+      const endTime = endDate.getTime();
+
+      if (isNaN(startTime) || isNaN(endTime)) {
+        Alert.alert('Error', 'Invalid date format. Use YYYY-MM-DD HH:MM');
+        return;
+      }
+
+      if (startTime >= endTime) {
+        Alert.alert('Error', 'End time must be after start time');
+        return;
+      }
+
+      console.log('Generating proof for timeframe:', {
+        startTime: new Date(startTime).toISOString(),
+        endTime: new Date(endTime).toISOString()
+      });
+
+      const speedTrackingService = getSpeedTrackingService();
+      const blockchainService = getBlockchainService();
+      const merkleService = getMerkleService();
+
+      // 1. Get local records and checkpoints for the timeframe
+      const exportData = await speedTrackingService.exportDataForTimeRange(startTime, endTime);
+      
+      if (!exportData || exportData.checkpoints.length === 0) {
+        Alert.alert('No Data', 'No speed records found for the specified timeframe');
+        return;
+      }
+
+      // 2. Verify each checkpoint against blockchain
+      const verificationResults = [];
+      
+      for (const checkpoint of exportData.checkpoints) {
+        try {
+          // Get blockchain checkpoint
+          const blockchainCheckpoint = await blockchainService.getCheckpointByRoot(checkpoint.merkleRoot);
+          
+          if (blockchainCheckpoint) {
+            // Generate proof document
+            const proofDoc = await blockchainService.generateProofDocument(checkpoint.merkleRoot);
+            
+            verificationResults.push({
+              checkpoint,
+              blockchainCheckpoint,
+              proofDocument: proofDoc,
+              isValid: proofDoc.isValid,
+              timeRange: {
+                start: new Date(checkpoint.startTime),
+                end: new Date(checkpoint.endTime)
+              }
+            });
+          } else {
+            verificationResults.push({
+              checkpoint,
+              blockchainCheckpoint: null,
+              isValid: false,
+              error: 'Checkpoint not found on blockchain'
+            });
+          }
+        } catch (error) {
+          console.error('Error verifying checkpoint:', error);
+          verificationResults.push({
+            checkpoint,
+            isValid: false,
+            error: error instanceof Error ? error.message : 'Verification failed'
+          });
+        }
+      }
+
+      // 3. Calculate aggregate statistics
+      const allRecords = exportData.records;
+      const speeds = allRecords.map(r => r.speed);
+      const avgSpeed = speeds.length > 0 ? speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length : 0;
+      const maxSpeed = speeds.length > 0 ? Math.max(...speeds) : 0;
+      const minSpeed = speeds.length > 0 ? Math.min(...speeds) : 0;
+
+      // Calculate total distance
+      let totalDistance = 0;
+      for (let i = 1; i < allRecords.length; i++) {
+        const prev = allRecords[i - 1];
+        const curr = allRecords[i];
+        const R = 3959; // Earth's radius in miles
+        const dLat = (curr.latitude - prev.latitude) * Math.PI / 180;
+        const dLon = (curr.longitude - prev.longitude) * Math.PI / 180;
+        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                  Math.cos(prev.latitude * Math.PI / 180) * Math.cos(curr.latitude * Math.PI / 180) *
+                  Math.sin(dLon/2) * Math.sin(dLon/2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        totalDistance += R * c;
+      }
+
+      const proofSummary = {
+        timeframe: {
+          start: new Date(startTime),
+          end: new Date(endTime),
+          duration: (endTime - startTime) / 1000 / 60 // minutes
+        },
+        statistics: {
+          avgSpeed: Math.round(avgSpeed * 100) / 100,
+          maxSpeed: Math.round(maxSpeed * 100) / 100,
+          minSpeed: Math.round(minSpeed * 100) / 100,
+          totalDistance: Math.round(totalDistance * 100) / 100,
+          recordCount: allRecords.length
+        },
+        verification: {
+          checkpointsFound: verificationResults.length,
+          checkpointsVerified: verificationResults.filter(r => r.isValid).length,
+          blockchainVerified: verificationResults.every(r => r.isValid),
+          contractAddress: CONTRACT_CONFIG.address,
+          network: 'Flow EVM Testnet'
+        },
+        checkpoints: verificationResults,
+        deviceAttestation: exportData.attestation,
+        generatedAt: new Date().toISOString(),
+        walletAddress: getWalletAddress()
+      };
+
+      setProofResult(proofSummary);
+      console.log('Proof generated successfully:', proofSummary);
+
+    } catch (error) {
+      console.error('Failed to generate proof:', error);
+      Alert.alert('Error', `Failed to generate proof: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsGeneratingProof(false);
+    }
+  };
+
+
 
   return (
     <SafeAreaView style={styles.container}>
@@ -132,7 +345,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
         {/* Wallet Info */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Wallet Information</Text>
+          <Text style={[styles.sectionTitle, { marginBottom: 15 }]}>Wallet Information</Text>
           
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Status:</Text>
@@ -157,7 +370,13 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
         {/* Network Info */}
         <View style={styles.section}>
+          <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Network</Text>
+            <View style={styles.statusBadge}>
+              <Ionicons name="checkmark-circle" size={16} color="#4CAF50" />
+              <Text style={styles.statusText}>Connected</Text>
+            </View>
+          </View>
           
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Network:</Text>
@@ -185,7 +404,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
         {/* Blockchain Status */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Blockchain Status</Text>
+          <Text style={[styles.sectionTitle, { marginBottom: 15 }]}>Blockchain Status</Text>
           
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Connection:</Text>
@@ -200,85 +419,28 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
           </View>
         </View>
 
+        {/* Speed Proof Query */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { marginBottom: 15 }]}>Legal Speed Verification</Text>
+          <Text style={styles.description}>
+            Generate blockchain-verified speed proofs for legal defense against speeding tickets.
+          </Text>
+
+          <TouchableOpacity 
+            style={styles.proofButton} 
+            onPress={() => {
+              setShowProofModal(true);
+              loadAvailableData();
+            }}
+          >
+            <Ionicons name="document-text-outline" size={20} color="white" />
+            <Text style={styles.buttonText}>Generate Speed Proof</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Actions */}
         <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.primaryButton} onPress={openTestnetFaucet}>
-            <Ionicons name="wallet-outline" size={20} color="white" />
-            <Text style={styles.buttonText}>Get Testnet FLOW</Text>
-          </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={styles.networkButton} 
-            onPress={async () => {
-              try {
-                if (account?.address && wallets.length > 0) {
-                  Alert.alert('Switching Network', 'Switching to Flow EVM testnet...');
-                  
-                  const blockchainService = getBlockchainService();
-                  const wallet = wallets[0];
-                  
-                  // Try wallet.switchChain first (preferred Privy method)
-                  let success = await blockchainService.switchNetworkUsingWallet(wallet);
-                  
-                  if (!success) {
-                    // Fallback to provider method
-                    console.log('Trying provider method...');
-                    const provider = await wallet.getProvider();
-                    await blockchainService.setWalletProvider(provider);
-                    success = true;
-                  }
-                  
-                  if (success) {
-                    Alert.alert('Success', 'Switched to Flow EVM testnet network');
-                    await loadProfileData();
-                  } else {
-                    Alert.alert('Error', 'Failed to switch network. Make sure Flow EVM testnet is configured.');
-                  }
-                } else {
-                  Alert.alert('Error', 'No wallet available');
-                }
-              } catch (error: any) {
-                console.error('Failed to switch network:', error);
-                if (error.message?.includes('Unsupported chainId')) {
-                  Alert.alert(
-                    'Configuration Required', 
-                    'Flow EVM testnet (Chain ID 545) is not configured in your Privy app.\n\nPlease add it in the Privy dashboard:\n• Chain ID: 545\n• RPC: https://testnet.evm.nodes.onflow.org'
-                  );
-                } else {
-                  Alert.alert('Error', 'Failed to switch network. Please try again.');
-                }
-              }
-            }}
-          >
-            <Ionicons name="swap-horizontal-outline" size={20} color="white" />
-            <Text style={styles.buttonText}>Switch to Flow EVM</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.debugButton} 
-            onPress={async () => {
-              try {
-                if (wallets.length > 0) {
-                  const provider = await wallets[0].getProvider();
-                  const chainId = await provider.request({ method: 'eth_chainId' });
-                  const chainIdDecimal = parseInt(chainId, 16);
-                  
-                  Alert.alert(
-                    'Current Network',
-                    `Chain ID: ${chainIdDecimal}\n\nNote: Flow EVM testnet (545) needs to be configured in your Privy app settings.`
-                  );
-                } else {
-                  Alert.alert('Error', 'No wallet available');
-                }
-              } catch (error) {
-                console.error('Failed to get chain info:', error);
-                Alert.alert('Error', 'Failed to get network info');
-              }
-            }}
-          >
-            <Ionicons name="information-circle-outline" size={20} color="white" />
-            <Text style={styles.buttonText}>Check Current Network</Text>
-          </TouchableOpacity>
 
           {pendingCheckpoints > 0 && (
             <>
@@ -320,40 +482,335 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
             <Text style={styles.buttonText}>Logout</Text>
           </TouchableOpacity>
         </View>
+      </ScrollView>
 
-        {/* Instructions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Instructions</Text>
-          <Text style={styles.instructionText}>
-            ⚠️ IMPORTANT: Flow EVM (Chain ID 545) is not configured in Privy
+      {/* Speed Proof Query Modal */}
+      <Modal
+        visible={showProofModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowProofModal(false)}>
+              <Ionicons name="close" size={24} color="#333" />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Generate Speed Proof</Text>
+            <View style={styles.placeholder} />
+        </View>
+
+                    <ScrollView style={styles.modalContent}>
+            <Text style={styles.modalDescription}>
+              Select a time period from your recorded data to generate a blockchain-verified speed proof.
           </Text>
-          <Text style={styles.instructionText}>
-            Please add Flow EVM testnet to your Privy app configuration:
+
+            {/* Available Data Summary */}
+            {isLoadingData ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#4CAF50" />
+                <Text style={styles.loadingText}>Loading your speed data...</Text>
+              </View>
+            ) : (
+              <View style={styles.dataOverview}>
+                <Text style={styles.dataTitle}>📊 Available Data</Text>
+                <View style={styles.dataStats}>
+                  <View style={styles.statItem}>
+                    <Text style={styles.statNumber}>{availableRecords.length}</Text>
+                    <Text style={styles.statLabel}>Speed Records</Text>
+                  </View>
+                  <View style={styles.statItem}>
+                    <Text style={styles.statNumber}>{availableCheckpoints.length}</Text>
+                    <Text style={styles.statLabel}>Blockchain Checkpoints</Text>
+                  </View>
+                </View>
+                
+                {availableRecords.length > 0 && (
+                  <View style={styles.dateRangeInfo}>
+                    <Text style={styles.dateRangeLabel}>Data Available From:</Text>
+                    <Text style={styles.dateRangeText}>
+                      {new Date(availableRecords[0].timestamp).toLocaleDateString()} to{' '}
+                      {new Date(availableRecords[availableRecords.length - 1].timestamp).toLocaleDateString()}
           </Text>
-          <Text style={styles.instructionText}>
-            • Chain ID: 545
+                  </View>
+                )}
+              </View>
+            )}
+
+            {/* Recent Checkpoints */}
+            {availableCheckpoints.length > 0 && (
+              <View style={styles.checkpointsSection}>
+                <Text style={styles.sectionTitle}>🔗 Recent Blockchain Checkpoints</Text>
+                <FlatList
+                  data={availableCheckpoints.slice(0, 5)}
+                  keyExtractor={(item, index) => index.toString()}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity 
+                      style={styles.checkpointItem}
+                      onPress={() => {
+                        // Set a proper time range around the checkpoint
+                        const checkpointStart = new Date(item.startTime);
+                        const checkpointEnd = new Date(item.endTime);
+                        
+                        // If start and end are the same, create a 1-hour window around it
+                        if (checkpointStart.getTime() === checkpointEnd.getTime()) {
+                          const centerTime = checkpointStart.getTime();
+                          setStartDate(new Date(centerTime - 30 * 60 * 1000)); // 30 minutes before
+                          setEndDate(new Date(centerTime + 30 * 60 * 1000));   // 30 minutes after
+                        } else {
+                          setStartDate(checkpointStart);
+                          setEndDate(checkpointEnd);
+                        }
+                      }}
+                    >
+                      <View style={styles.checkpointHeader}>
+                        <Ionicons name="time-outline" size={16} color="#666" />
+                        <Text style={styles.checkpointTime}>
+                          {new Date(item.startTime).toLocaleString()}
           </Text>
-          <Text style={styles.instructionText}>
-            • RPC: https://testnet.evm.nodes.onflow.org
+                      </View>
+                      <Text style={styles.checkpointStats}>
+                        Avg: {item.avgSpeed} mph • Max: {item.maxSpeed} mph • Records: {item.recordCount}
           </Text>
-          <Text style={styles.instructionText}>
-            • Currency: FLOW
+                    </TouchableOpacity>
+                  )}
+                  scrollEnabled={false}
+                />
+                <Text style={styles.tapHint}>💡 Tap a checkpoint to select its time period</Text>
+              </View>
+            )}
+
+            {/* Quick Presets */}
+            <View style={styles.quickPresetsSection}>
+              <Text style={styles.sectionTitle}>⚡ Quick Select</Text>
+              <View style={styles.presetButtons}>
+                <TouchableOpacity 
+                  style={styles.presetButton}
+                  onPress={() => {
+                    const now = new Date();
+                    setStartDate(new Date(now.getTime() - 60 * 60 * 1000)); // 1 hour ago
+                    setEndDate(now);
+                  }}
+                >
+                  <Text style={styles.presetButtonText}>Last Hour</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={styles.presetButton}
+                  onPress={() => {
+                    const now = new Date();
+                    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    setStartDate(today);
+                    setEndDate(now);
+                  }}
+                >
+                  <Text style={styles.presetButtonText}>Today</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={styles.presetButton}
+                  onPress={() => {
+                    const now = new Date();
+                    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+                    const yesterdayStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate());
+                    const yesterdayEnd = new Date(yesterdayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+                    setStartDate(yesterdayStart);
+                    setEndDate(yesterdayEnd);
+                  }}
+                >
+                  <Text style={styles.presetButtonText}>Yesterday</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Date/Time Selection */}
+            <View style={styles.dateTimeSection}>
+              <Text style={styles.sectionTitle}>📅 Custom Time Period</Text>
+              
+              {/* Start Date/Time */}
+              <View style={styles.dateTimeGroup}>
+                <Text style={styles.dateTimeLabel}>From:</Text>
+                <View style={styles.dateTimeRow}>
+                                    <TouchableOpacity 
+                    style={styles.dateButton}
+                    onPress={() => openDateTimePicker('start', 'date')}
+                  >
+                    <Ionicons name="calendar-outline" size={20} color="#4CAF50" />
+                    <Text style={styles.dateButtonText}>
+                      {startDate.toLocaleDateString()}
+                    </Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    style={styles.timeButton}
+                    onPress={() => openDateTimePicker('start', 'time')}
+                  >
+                    <Ionicons name="time-outline" size={20} color="#4CAF50" />
+                    <Text style={styles.timeButtonText}>
+                      {startDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* End Date/Time */}
+              <View style={styles.dateTimeGroup}>
+                <Text style={styles.dateTimeLabel}>To:</Text>
+                <View style={styles.dateTimeRow}>
+                                    <TouchableOpacity 
+                    style={styles.dateButton}
+                    onPress={() => openDateTimePicker('end', 'date')}
+                  >
+                    <Ionicons name="calendar-outline" size={20} color="#2196F3" />
+                    <Text style={styles.dateButtonText}>
+                      {endDate.toLocaleDateString()}
+                    </Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    style={styles.timeButton}
+                    onPress={() => openDateTimePicker('end', 'time')}
+                  >
+                    <Ionicons name="time-outline" size={20} color="#2196F3" />
+                    <Text style={styles.timeButtonText}>
+                      {endDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.generateButton, isGeneratingProof && styles.disabledButton]}
+              onPress={generateSpeedProof}
+              disabled={isGeneratingProof}
+            >
+              {isGeneratingProof ? (
+                <ActivityIndicator color="white" size="small" />
+              ) : (
+                <Ionicons name="shield-checkmark" size={20} color="white" />
+              )}
+              <Text style={styles.buttonText}>
+                {isGeneratingProof ? 'Generating Proof...' : 'Generate Blockchain Proof'}
           </Text>
-          <View style={styles.divider} />
-          <Text style={styles.instructionText}>
-            Once configured:
+            </TouchableOpacity>
+
+            {/* Proof Results */}
+            {proofResult && (
+              <View style={styles.proofResultsContainer}>
+                <Text style={styles.resultsTitle}>🛡️ Legal Speed Proof Generated</Text>
+                
+                {/* Summary */}
+                <View style={styles.proofSection}>
+                  <Text style={styles.proofSectionTitle}>Time Period</Text>
+                  <Text style={styles.proofText}>
+                    From: {proofResult.timeframe.start.toLocaleString()}
           </Text>
-          <Text style={styles.instructionText}>
-            1. Copy wallet address and get testnet FLOW
+                  <Text style={styles.proofText}>
+                    To: {proofResult.timeframe.end.toLocaleString()}
           </Text>
-          <Text style={styles.instructionText}>
-            2. Switch to Flow EVM network
-          </Text>
-          <Text style={styles.instructionText}>
-            3. Submit checkpoints to blockchain
+                  <Text style={styles.proofText}>
+                    Duration: {Math.round(proofResult.timeframe.duration)} minutes
           </Text>
         </View>
+
+                {/* Speed Statistics */}
+                <View style={styles.proofSection}>
+                  <Text style={styles.proofSectionTitle}>Speed Statistics</Text>
+                  <Text style={styles.proofText}>Average Speed: {proofResult.statistics.avgSpeed} mph</Text>
+                  <Text style={styles.proofText}>Maximum Speed: {proofResult.statistics.maxSpeed} mph</Text>
+                  <Text style={styles.proofText}>Minimum Speed: {proofResult.statistics.minSpeed} mph</Text>
+                  <Text style={styles.proofText}>Total Distance: {proofResult.statistics.totalDistance} miles</Text>
+                  <Text style={styles.proofText}>Data Points: {proofResult.statistics.recordCount}</Text>
+                </View>
+
+                {/* Blockchain Verification */}
+                <View style={styles.proofSection}>
+                  <Text style={styles.proofSectionTitle}>Blockchain Verification</Text>
+                  <View style={styles.verificationRow}>
+                    <Ionicons 
+                      name={proofResult.verification.blockchainVerified ? "checkmark-circle" : "close-circle"} 
+                      size={20} 
+                      color={proofResult.verification.blockchainVerified ? "#4CAF50" : "#f44336"} 
+                    />
+                    <Text style={[
+                      styles.proofText, 
+                      { color: proofResult.verification.blockchainVerified ? "#4CAF50" : "#f44336" }
+                    ]}>
+                      {proofResult.verification.blockchainVerified ? 'Verified on Blockchain' : 'Verification Failed'}
+          </Text>
+                  </View>
+                  <Text style={styles.proofText}>
+                    Checkpoints: {proofResult.verification.checkpointsVerified}/{proofResult.verification.checkpointsFound} verified
+          </Text>
+                  <Text style={styles.proofText}>Network: {proofResult.verification.network}</Text>
+                  
+                  <TouchableOpacity 
+                    style={styles.contractButton}
+                    onPress={() => copyToClipboard(proofResult.verification.contractAddress, 'Contract address')}
+                  >
+                    <Text style={styles.contractText}>
+                      Contract: {proofResult.verification.contractAddress}
+          </Text>
+                    <Ionicons name="copy-outline" size={16} color="#666" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Legal Notice */}
+                <View style={styles.legalNotice}>
+                  <Ionicons name="information-circle" size={20} color="#FF9800" />
+                  <Text style={styles.legalText}>
+                    This proof is cryptographically verified on the Flow blockchain and can be used as evidence in legal proceedings.
+          </Text>
+        </View>
+
+                {/* Actions */}
+                <View style={styles.proofActions}>
+                  <TouchableOpacity 
+                    style={styles.copyProofButton}
+                    onPress={() => copyToClipboard(JSON.stringify(proofResult, null, 2), 'Speed proof')}
+                  >
+                    <Ionicons name="copy-outline" size={20} color="white" />
+                    <Text style={styles.buttonText}>Copy Full Proof</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+                        )}
       </ScrollView>
+
+          {/* Integrated Date/Time Picker Modal */}
+          {showDateTimePicker && (
+            <Modal
+              visible={showDateTimePicker}
+              transparent={true}
+              animationType="fade"
+            >
+              <View style={styles.pickerModalOverlay}>
+                <View style={styles.pickerModalContent}>
+                  <View style={styles.pickerHeader}>
+                    <TouchableOpacity onPress={cancelDateTimeSelection}>
+                      <Text style={styles.pickerButtonText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.pickerTitle}>
+                      Select {pickerMode === 'date' ? 'Date' : 'Time'} ({pickerType === 'start' ? 'From' : 'To'})
+                    </Text>
+                    <TouchableOpacity onPress={confirmDateTimeSelection}>
+                      <Text style={[styles.pickerButtonText, styles.confirmButton]}>Done</Text>
+                    </TouchableOpacity>
+                  </View>
+                  
+                  <DateTimePicker
+                    value={tempDate}
+                    mode={pickerMode}
+                    display="spinner"
+                    onChange={handleDateTimeChange}
+                    style={styles.dateTimePicker}
+                  />
+                </View>
+              </View>
+            </Modal>
+          )}
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -396,11 +853,30 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 3,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 15,
     color: '#333',
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E8',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusText: {
+    fontSize: 12,
+    color: '#4CAF50',
+    fontWeight: '600',
+    marginLeft: 4,
   },
   infoRow: {
     flexDirection: 'row',
@@ -448,24 +924,7 @@ const styles = StyleSheet.create({
   buttonContainer: {
     marginVertical: 20,
   },
-  primaryButton: {
-    backgroundColor: '#2196F3',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 10,
-  },
-  networkButton: {
-    backgroundColor: '#9C27B0',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 10,
-  },
+
   actionButton: {
     backgroundColor: '#FF9800',
     flexDirection: 'row',
@@ -492,30 +951,364 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginBottom: 10,
   },
-  debugButton: {
-    backgroundColor: '#607D8B',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 10,
-  },
+
   buttonText: {
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
     marginLeft: 8,
   },
-  instructionText: {
+  description: {
     fontSize: 14,
     color: '#666',
     lineHeight: 20,
+    marginBottom: 15,
+  },
+  proofButton: {
+    backgroundColor: '#4CAF50',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 15,
+    borderRadius: 10,
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: 'white',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  modalContent: {
+    flex: 1,
+    padding: 20,
+  },
+  modalDescription: {
+    fontSize: 16,
+    color: '#666',
+    lineHeight: 22,
+    marginBottom: 20,
+  },
+  inputSection: {
+    marginBottom: 20,
+  },
+  inputLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
     marginBottom: 8,
   },
-  divider: {
-    height: 1,
-    backgroundColor: '#E0E0E0',
-    marginVertical: 15,
+  textInput: {
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 15,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  generateButton: {
+    backgroundColor: '#2196F3',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 20,
+  },
+  disabledButton: {
+    backgroundColor: '#ccc',
+  },
+  proofResultsContainer: {
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 20,
+    marginTop: 10,
+  },
+  resultsTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  proofSection: {
+    marginBottom: 20,
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  proofSectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
+  },
+  proofText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 5,
+  },
+  verificationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  contractButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8f8f8',
+    padding: 8,
+    borderRadius: 6,
+    marginTop: 5,
+  },
+  legalNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FFF3E0',
+    padding: 15,
+    borderRadius: 8,
+    marginBottom: 20,
+  },
+  legalText: {
+    fontSize: 14,
+    color: '#FF9800',
+    marginLeft: 10,
+    flex: 1,
+    lineHeight: 20,
+  },
+  proofActions: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  copyProofButton: {
+    backgroundColor: '#FF9800',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 15,
+    borderRadius: 10,
+    flex: 1,
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    padding: 40,
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#666',
+    marginTop: 10,
+  },
+  dataOverview: {
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 20,
+    marginBottom: 20,
+  },
+  dataTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  dataStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 15,
+  },
+  statItem: {
+    alignItems: 'center',
+  },
+  statNumber: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+  },
+  statLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 5,
+  },
+  dateRangeInfo: {
+    backgroundColor: '#f8f8f8',
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  dateRangeLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 5,
+  },
+  dateRangeText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  checkpointsSection: {
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 20,
+    marginBottom: 20,
+  },
+  checkpointItem: {
+    backgroundColor: '#f8f8f8',
+    borderRadius: 8,
+    padding: 15,
+    marginBottom: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#4CAF50',
+  },
+  checkpointHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  checkpointTime: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginLeft: 8,
+  },
+  checkpointStats: {
+    fontSize: 14,
+    color: '#666',
+  },
+  tapHint: {
+    fontSize: 12,
+    color: '#999',
+    textAlign: 'center',
+    fontStyle: 'italic',
+    marginTop: 10,
+  },
+  dateTimeSection: {
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 20,
+    marginBottom: 20,
+  },
+  dateTimeGroup: {
+    marginBottom: 20,
+  },
+  dateTimeLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 10,
+  },
+  dateTimeRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  dateButton: {
+    flex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E8',
+    padding: 15,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4CAF50',
+  },
+  timeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E3F2FD',
+    padding: 15,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2196F3',
+  },
+  dateButtonText: {
+    fontSize: 16,
+    color: '#4CAF50',
+    fontWeight: '600',
+    marginLeft: 10,
+  },
+  timeButtonText: {
+    fontSize: 16,
+    color: '#2196F3',
+    fontWeight: '600',
+    marginLeft: 10,
+  },
+  pickerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pickerModalContent: {
+    backgroundColor: 'white',
+    borderRadius: 15,
+    padding: 0,
+    margin: 20,
+    minWidth: 300,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  pickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  pickerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  pickerButtonText: {
+    fontSize: 16,
+    color: '#2196F3',
+    fontWeight: '600',
+  },
+  confirmButton: {
+    color: '#4CAF50',
+  },
+  dateTimePicker: {
+    backgroundColor: 'white',
+  },
+  quickPresetsSection: {
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 20,
+    marginBottom: 20,
+  },
+  presetButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    gap: 10,
+  },
+  presetButton: {
+    flex: 1,
+    backgroundColor: '#E3F2FD',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2196F3',
+    alignItems: 'center',
+  },
+  presetButtonText: {
+    fontSize: 14,
+    color: '#2196F3',
+    fontWeight: '600',
   },
 });

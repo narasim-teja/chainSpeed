@@ -40,6 +40,37 @@ class BlockchainServiceClass {
     this.initializeClients();
   }
 
+  /**
+   * Format a hash string to proper bytes32 format for blockchain operations
+   */
+  private formatBytes32(hash: string, errorContext: string = 'hash', throwOnError: boolean = true): string | null {
+    try {
+      let formatted = hash;
+      
+      // Remove 0x prefix if present
+      if (formatted.startsWith('0x')) {
+        formatted = formatted.slice(2);
+      }
+      
+      // SHA256 should be exactly 64 hex characters (32 bytes)
+      if (formatted.length !== 64) {
+        console.error(`Invalid ${errorContext} length:`, formatted.length, 'expected 64');
+        if (throwOnError) {
+          throw new Error(`Invalid ${errorContext} format: ${formatted}`);
+        }
+        return null;
+      }
+      
+      return '0x' + formatted;
+    } catch (error) {
+      console.error(`Error formatting ${errorContext}:`, error);
+      if (throwOnError) {
+        throw error;
+      }
+      return null;
+    }
+  }
+
   private initializeClients() {
     // Initialize public client for reading data
     this.publicClient = createPublicClient({
@@ -199,14 +230,12 @@ class BlockchainServiceClass {
       );
 
       // Create blockchain checkpoint format
-      // Ensure merkleRoot is properly formatted as bytes32 (0x + 64 hex chars)
-      const formattedMerkleRoot = checkpoint.merkleRoot.startsWith('0x') 
-        ? checkpoint.merkleRoot 
-        : '0x' + checkpoint.merkleRoot;
+      const formattedMerkleRoot = this.formatBytes32(checkpoint.merkleRoot, 'Merkle root');
+      const formattedAttestation = this.formatBytes32(attestationHash, 'attestation hash');
       
-      const formattedAttestation = attestationHash.startsWith('0x')
-        ? attestationHash
-        : '0x' + attestationHash;
+      if (!formattedMerkleRoot || !formattedAttestation) {
+        throw new Error('Failed to format checkpoint data for blockchain submission');
+      }
       
       console.log('Formatting checkpoint for blockchain:', {
         originalMerkleRoot: checkpoint.merkleRoot,
@@ -467,11 +496,23 @@ class BlockchainServiceClass {
         await this.checkConnection();
       }
 
+      // Format merkle root for blockchain query (ensure proper bytes32 format)
+      const formattedMerkleRoot = this.formatBytes32(merkleRoot, 'Merkle root query', false);
+      if (!formattedMerkleRoot) {
+        return null;
+      }
+      
+      console.log('Querying blockchain with formatted Merkle root:', {
+        original: merkleRoot,
+        formatted: formattedMerkleRoot,
+        length: formattedMerkleRoot.length
+      });
+
       const checkpoint = await this.publicClient.readContract({
         address: CONTRACT_CONFIG.address,
         abi: SPEED_REGISTRY_ABI,
         functionName: 'getCheckpointByRoot',
-        args: [merkleRoot],
+        args: [formattedMerkleRoot],
       });
 
       return {
@@ -507,11 +548,31 @@ class BlockchainServiceClass {
         await this.checkConnection();
       }
 
+      // Format all elements for blockchain query
+      const formattedMerkleRoot = this.formatBytes32(merkleRoot, 'Merkle root for proof', false);
+      if (!formattedMerkleRoot) {
+        return false;
+      }
+
+      const formattedProof: string[] = [];
+      for (const p of proof) {
+        const formatted = this.formatBytes32(p, 'proof element', false);
+        if (!formatted) {
+          return false;
+        }
+        formattedProof.push(formatted);
+      }
+
+      const formattedLeaf = this.formatBytes32(leaf, 'proof leaf', false);
+      if (!formattedLeaf) {
+        return false;
+      }
+
       const isValid = await this.publicClient.readContract({
         address: CONTRACT_CONFIG.address,
         abi: SPEED_REGISTRY_ABI,
         functionName: 'verifyMerkleProof',
-        args: [merkleRoot, proof, leaf, indices],
+        args: [formattedMerkleRoot, formattedProof, formattedLeaf, indices],
       });
 
       return isValid;

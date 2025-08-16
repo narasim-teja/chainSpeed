@@ -25,8 +25,8 @@ interface SensorData {
 
 const LOCATION_TASK_NAME = 'background-location-task';
 const STORAGE_KEY = 'speed_records';
-const MIN_SPEED_THRESHOLD = 5; // mph - only track when moving
-const GPS_ACCURACY_THRESHOLD = 20; // meters
+const MIN_SPEED_THRESHOLD = 0; // mph - track all movement including stopped (for legal coverage)
+const GPS_ACCURACY_THRESHOLD = 100; // meters - more lenient for legal coverage (indoor/poor signal)
 
 class LocationServiceClass {
   private isTracking = false;
@@ -153,41 +153,47 @@ class LocationServiceClass {
   }
 
   private async validateRecord(record: SpeedRecord): Promise<boolean> {
-    // Multi-layer validation
+    // Multi-layer validation for legal coverage
     
-    // 1. GPS accuracy check
+    // 1. GPS accuracy check (more lenient for legal coverage)
     if (record.accuracy > GPS_ACCURACY_THRESHOLD) {
-      console.warn('GPS accuracy too low:', record.accuracy);
+      console.warn('GPS accuracy too low - record rejected:', record.accuracy, 'meters (threshold:', GPS_ACCURACY_THRESHOLD, 'meters)');
       return false;
     }
 
-    // 2. Speed consistency check
-    if (this.previousRecord) {
+    // 2. Speed consistency check (only when moving)
+    if (this.previousRecord && record.speed > 0) {
       const calculatedSpeed = this.calculateSpeedFromCoordinates(
         this.previousRecord.latitude, this.previousRecord.longitude, this.previousRecord.timestamp,
         record.latitude, record.longitude, record.timestamp
       );
       
       const speedDifference = Math.abs(record.speed - calculatedSpeed);
-      if (speedDifference > 10) { // Allow 10 mph variance
-        console.warn('Speed inconsistency detected:', speedDifference);
+      if (speedDifference > 15) { // More lenient for legal coverage
+        console.warn('Speed inconsistency detected - record rejected:', speedDifference, 'mph difference');
         return false;
       }
     }
 
-    // 3. Accelerometer correlation check
+    // 3. Accelerometer correlation check (warning only, don't reject)
     const accelerationMagnitude = Math.sqrt(
       Math.pow(record.accelerometer.x, 2) +
       Math.pow(record.accelerometer.y, 2) +
       Math.pow(record.accelerometer.z, 2)
     );
 
-    // Should correlate with speed changes
+    // Log but don't reject for accelerometer issues (sensor may vary)
     const expectedAcceleration = record.speed > 0 ? 0.8 : 0.2;
     if (Math.abs(accelerationMagnitude - expectedAcceleration) > 2) {
-      console.warn('Accelerometer correlation check failed');
+      console.log('Accelerometer correlation note:', accelerationMagnitude, 'vs expected:', expectedAcceleration);
     }
 
+    console.log('Record validation passed:', {
+      accuracy: record.accuracy,
+      speed: record.speed,
+      status: record.speed > 0 ? 'moving' : 'stopped'
+    });
+    
     return true;
   }
 
@@ -295,22 +301,30 @@ class LocationServiceClass {
       };
 
       // Validate record
+      console.log('Processing location update:', {
+        speed: speed,
+        accuracy: record.accuracy,
+        coords: [record.latitude, record.longitude]
+      });
+      
       const isValid = await this.validateRecord(record as SpeedRecord);
-      if (!isValid) return;
+      if (!isValid) {
+        console.log('Record validation failed - skipping record creation');
+        return;
+      }
 
       // Generate signature
       const signature = await this.generateSignature(record);
       const signedRecord: SpeedRecord = { ...record, signature };
 
-      // Store record only if moving (for storage efficiency)
-      if (speed >= MIN_SPEED_THRESHOLD) {
-        await this.storeRecord(signedRecord);
-        console.log('Speed record created:', {
-          speed: signedRecord.speed,
-          accuracy: signedRecord.accuracy,
-          timestamp: new Date(signedRecord.timestamp).toISOString()
-        });
-      }
+      // Always store record for complete legal coverage (including when stopped)
+      await this.storeRecord(signedRecord);
+      console.log('Speed record created:', {
+        speed: signedRecord.speed,
+        accuracy: signedRecord.accuracy,
+        timestamp: new Date(signedRecord.timestamp).toISOString(),
+        status: speed > 0 ? 'moving' : 'stopped'
+      });
       
       // Always update previous record and last known speed
       this.previousRecord = signedRecord;
@@ -334,11 +348,15 @@ class LocationServiceClass {
       
       records.push(record);
 
-      // Keep only last 24 hours of data
+      // Keep only last 24 hours of data (more efficient cleanup for higher volume)
       const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
       const filteredRecords = records.filter(r => r.timestamp > oneDayAgo);
 
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(filteredRecords));
+      // Limit total records to prevent excessive storage (keep last 2880 records = 24h at 1/sec)
+      const maxRecords = 2880; // 24 hours * 60 minutes * 2 (every 30 seconds average)
+      const trimmedRecords = filteredRecords.slice(-maxRecords);
+
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(trimmedRecords));
       
     } catch (error) {
       console.error('Failed to store record:', error);

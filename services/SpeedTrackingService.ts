@@ -51,8 +51,8 @@ class SpeedTrackingServiceClass {
         // Call original processing
         await originalProcess(location);
 
-        // For Merkle tree, we want to track the current state even when stopped
-        // This is the last processed record (includes 0 speed)
+        // For Merkle tree, we track all records including when stopped (complete legal coverage)
+        // This ensures all time periods are recorded for legal protection
         if ((this.locationService as any).previousRecord) {
           this.merkleService.addRecord((this.locationService as any).previousRecord);
         }
@@ -144,7 +144,7 @@ class SpeedTrackingServiceClass {
         };
       }
 
-      // Calculate stats from stored records (moving only)
+      // Calculate stats from stored records (includes all periods)
       const speeds = records.map(r => r.speed);
       const maxSpeed = Math.max(...speeds);
       const avgSpeed = speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length;
