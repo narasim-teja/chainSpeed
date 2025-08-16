@@ -11,6 +11,7 @@ import {
 import { getSpeedTrackingService } from '../services/SpeedTrackingService';
 import { SpeedRecord } from '../services/LocationService';
 import { CheckpointData } from '../services/MerkleService';
+import { getBlockchainService, BlockchainCheckpoint } from '../services/BlockchainService';
 
 interface TrackingStats {
   currentSpeed: number;
@@ -20,6 +21,8 @@ interface TrackingStats {
   recordCount: number;
   checkpointCount: number;
   isTracking: boolean;
+  blockchainConnected: boolean;
+  pendingCheckpoints: number;
 }
 
 export default function TrackingScreen() {
@@ -31,6 +34,8 @@ export default function TrackingScreen() {
     recordCount: 0,
     checkpointCount: 0,
     isTracking: false,
+    blockchainConnected: false,
+    pendingCheckpoints: 0,
   });
 
   const [recentRecords, setRecentRecords] = useState<SpeedRecord[]>([]);
@@ -51,6 +56,7 @@ export default function TrackingScreen() {
   const updateStats = async () => {
     try {
       const trackingService = getSpeedTrackingService();
+      const blockchainService = getBlockchainService();
 
       // Get current stats from the main service
       const currentStats = await trackingService.getCurrentStats();
@@ -65,6 +71,10 @@ export default function TrackingScreen() {
       const checkpoints = await merkleService.getCheckpoints(todayStart);
       setRecentCheckpoints(checkpoints.slice(-5)); // Show last 5 checkpoints
 
+      // Get blockchain status
+      const isConnected = await blockchainService.checkConnection();
+      const pendingCheckpoints = await blockchainService.getPendingCheckpoints();
+
       setStats({
         currentSpeed: currentStats.currentSpeed,
         maxSpeed: currentStats.maxSpeed,
@@ -73,6 +83,8 @@ export default function TrackingScreen() {
         recordCount: currentStats.recordCount,
         checkpointCount: currentStats.checkpointCount,
         isTracking: trackingService.getTrackingStatus(),
+        blockchainConnected: isConnected,
+        pendingCheckpoints: pendingCheckpoints.length,
       });
 
     } catch (error) {
@@ -200,6 +212,21 @@ export default function TrackingScreen() {
             <Text style={styles.statBoxLabel}>Checkpoints</Text>
             <Text style={styles.statBoxValue}>{stats.checkpointCount}</Text>
           </View>
+        </View>
+
+        {/* Blockchain Status */}
+        <View style={styles.blockchainStatus}>
+          <View style={styles.statusRow}>
+            <View style={[styles.statusIndicator, stats.blockchainConnected ? styles.connected : styles.disconnected]} />
+            <Text style={styles.statusText}>
+              Flow Blockchain {stats.blockchainConnected ? 'Connected' : 'Disconnected'}
+            </Text>
+          </View>
+          {stats.pendingCheckpoints > 0 && (
+            <Text style={styles.pendingText}>
+              {stats.pendingCheckpoints} checkpoints pending blockchain submission
+            </Text>
+          )}
         </View>
 
         {/* Control Buttons */}
@@ -444,6 +471,44 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#999',
     textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  blockchainStatus: {
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 15,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 5,
+  },
+  statusIndicator: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 10,
+  },
+  connected: {
+    backgroundColor: '#4CAF50',
+  },
+  disconnected: {
+    backgroundColor: '#f44336',
+  },
+  statusText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333',
+  },
+  pendingText: {
+    fontSize: 12,
+    color: '#FF9800',
     fontStyle: 'italic',
   },
 });

@@ -2,6 +2,7 @@ import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SpeedRecord } from './LocationService';
 import { getCryptoService, SignedData } from './CryptoService';
+import { getBlockchainService } from './BlockchainService';
 
 export interface MerkleNode {
   hash: string;
@@ -89,6 +90,22 @@ class MerkleServiceClass {
 
       // Store checkpoint and tree
       await this.storeCheckpoint(finalCheckpoint, merkleTree, this.pendingRecords);
+
+      // Submit checkpoint to blockchain
+      try {
+        const blockchainService = getBlockchainService();
+        const txHash = await blockchainService.submitCheckpoint(finalCheckpoint);
+        if (txHash) {
+          console.log('Checkpoint submitted to blockchain:', {
+            root: finalCheckpoint.merkleRoot.substring(0, 8) + '...',
+            txHash: txHash.substring(0, 8) + '...',
+            records: finalCheckpoint.recordCount,
+            timespan: (finalCheckpoint.endTime - finalCheckpoint.startTime) / 1000 + 's'
+          });
+        }
+      } catch (error) {
+        console.error('Failed to submit checkpoint to blockchain:', error);
+      }
 
       console.log('Checkpoint created:', {
         root: finalCheckpoint.merkleRoot,
