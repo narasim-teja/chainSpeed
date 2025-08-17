@@ -337,12 +337,7 @@ class XPService {
     }
   }
 
-  /**
-   * Check if drive-to-earn is enabled
-   */
-  public isDriveToEarnEnabled(): boolean {
-    return this.driveToEarnEnabled;
-  }
+
 
   /**
    * Get pending XP (not yet submitted to blockchain)

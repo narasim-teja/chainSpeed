@@ -18,8 +18,8 @@ export const HEDERA_TESTNET_CONFIG = CURRENT_CHAIN_CONFIG;
 
 // Smart contract configuration  
 export const CONTRACT_CONFIG = {
-  address: '0xC1768e08130BA10305064DbA76C57E890B270b3F' as const, // SpeedRegistry Contract
-  xpRewardsAddress: '0xBB8647F3eCa9fb1f2eb049B07697Ad02f8720ac8' as const, // XP Rewards Contract
+  address: '0xBB8647F3eCa9fb1f2eb049B07697Ad02f8720ac8' as const, // SpeedRegistry Contract
+  xpRewardsAddress: '0x7224Cf802c4e6bDE9e67C8Eec2673dB85B0B7816' as const, // XP Rewards Contract
 };
 
 // Contract ABI for SpeedRegistry

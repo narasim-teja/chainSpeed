@@ -13,10 +13,10 @@ import { usePrivy, useEmbeddedEthereumWallet, getUserEmbeddedEthereumWallet } fr
 import { useRouter } from 'expo-router';
 import { getSpeedTrackingService } from '../services/SpeedTrackingService';
 import { SpeedRecord } from '../services/LocationService';
-import { CheckpointData } from '../services/MerkleService';
+
 import { getBlockchainService } from '../services/BlockchainService';
 import { getXPService } from '../services/XPService';
-import { CURRENT_CHAIN_CONFIG } from '../constants/Blockchain';
+
 
 interface TrackingStats {
   currentSpeed: number;
@@ -32,13 +32,15 @@ interface TrackingStats {
   teeSessionActive: boolean;
   driveToEarnEnabled: boolean;
   pendingXP: number;
+  walletBalance?: string;
+  hasLowBalance?: boolean;
 }
 
 interface TrackingScreenProps {
   navigation?: any;
 }
 
-export default function TrackingScreen({ navigation }: TrackingScreenProps) {
+export default function TrackingScreen({ navigation }: TrackingScreenProps = {}) {
   const { user } = usePrivy();
   const { wallets, create } = useEmbeddedEthereumWallet();
   const account = getUserEmbeddedEthereumWallet(user);
@@ -61,7 +63,9 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
   });
 
   const [recentRecords, setRecentRecords] = useState<SpeedRecord[]>([]);
-  const [recentCheckpoints, setRecentCheckpoints] = useState<CheckpointData[]>([]);
+  const [isTEEAuthenticating, setIsTEEAuthenticating] = useState(false);
+  const [teeInitialized, setTeeInitialized] = useState(false);
+  const [teeAuthenticated, setTeeAuthenticated] = useState(false);
 
   useEffect(() => {
     // Initial update
@@ -129,13 +133,6 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
       const recentRecords = await trackingService.getRecentRecords(5); // Last 5 minutes
       
       setRecentRecords(recentRecords.slice(-10)); // Show last 10 records
-      
-      // Also get recent checkpoints
-      const { getMerkleService } = await import('../services/MerkleService');
-      const merkleService = getMerkleService();
-      const todayStart = new Date().setHours(0, 0, 0, 0);
-      const checkpoints = await merkleService.getCheckpoints(todayStart);
-      setRecentCheckpoints(checkpoints.slice(-5)); // Show last 5 checkpoints
 
       // Get blockchain status
       const isConnected = await blockchainService.checkConnection();
@@ -165,6 +162,20 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
         // XP service not available, keep defaults
       }
 
+      // Get wallet balance info
+      let walletBalance: string | undefined;
+      let hasLowBalance = false;
+      try {
+        const balance = await blockchainService.getWalletBalance();
+        const hasSufficientBalance = await blockchainService.hasSufficientBalance();
+        if (balance) {
+          walletBalance = balance.balanceInHBAR;
+          hasLowBalance = !hasSufficientBalance;
+        }
+      } catch {
+        // Balance check not available, keep defaults
+      }
+
       setStats({
         currentSpeed: currentStats.currentSpeed,
         maxSpeed: currentStats.maxSpeed,
@@ -179,7 +190,13 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
         teeSessionActive,
         driveToEarnEnabled,
         pendingXP,
+        walletBalance,
+        hasLowBalance,
       });
+
+      // Update local TEE states
+      setTeeInitialized(teeEnabled);
+      setTeeAuthenticated(teeSessionActive);
 
     } catch (error) {
       console.error('Failed to update stats:', error);
@@ -187,8 +204,50 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
   };
 
 
+  // Step 1: Initialize TEE with Face ID
+  const initializeTEE = async () => {
+    if (isTEEAuthenticating) return;
+    
+    setIsTEEAuthenticating(true);
+    try {
+      console.log('🔐 Step 1: Initializing TEE with Face ID...');
+      const { getTEECryptoService } = await import('../services/TEECryptoService');
+      const teeService = getTEECryptoService();
+      
+      // Initialize and authenticate TEE
+      await teeService.initialize();
+      await teeService.authenticateSession();
+      
+      console.log('✅ TEE initialized and Face ID authenticated');
+      setTeeInitialized(true);
+      Alert.alert('Success', 'Face ID verified! Now you can authenticate for tracking.');
+      
+      await updateStats();
+    } catch (error) {
+      console.error('TEE initialization failed:', error);
+      Alert.alert('Face ID Failed', 'Face ID authentication failed. Please try again.');
+    } finally {
+      setIsTEEAuthenticating(false);
+    }
+  };
+
+  // Step 2: Authenticate for tracking
+  const authenticateForTracking = async () => {
+    try {
+      console.log('🔐 Step 2: Authenticating for tracking...');
+      setTeeAuthenticated(true);
+      Alert.alert('Authenticated', 'You are now authenticated! You can start tracking.');
+      await updateStats();
+    } catch (error) {
+      console.error('Authentication failed:', error);
+      Alert.alert('Error', 'Authentication failed');
+    }
+  };
+
+  // Step 3: Actually start tracking
   const startTracking = async () => {
     try {
+      console.log('🚀 Step 3: Starting actual tracking...');
       const trackingService = getSpeedTrackingService();
       const success = await trackingService.startTracking();
       
@@ -240,57 +299,17 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
     }
   };
 
-  const authenticateTEE = async () => {
-    try {
-      const { getTEECryptoService } = await import('../services/TEECryptoService');
-      const teeService = getTEECryptoService();
-      
-      await teeService.authenticateSession();
-      Alert.alert('Success', 'TEE session authenticated! Speed tracking is now hardware-secured.');
-      await updateStats();
-    } catch (error) {
-      console.error('TEE authentication failed:', error);
-      Alert.alert('Authentication Failed', 'Could not authenticate with Secure Enclave. Please try again.');
-    }
-  };
-
-  const resetTEE = async () => {
-    try {
-      const { getTEECryptoService } = await import('../services/TEECryptoService');
-      const teeService = getTEECryptoService();
-      
-      await teeService.resetTEE();
-      await teeService.initialize();
-      Alert.alert('Success', 'TEE reset and reinitialized! Try authenticating again.');
-      await updateStats();
-    } catch (error) {
-      console.error('TEE reset failed:', error);
-      Alert.alert('Reset Failed', 'Could not reset TEE state: ' + (error instanceof Error ? error.message : String(error)));
-    }
-  };
 
 
-  const openProfile = () => {
-    if (navigation) {
-      navigation.push('/profile');
-    } else {
-      // For now, show an alert with basic info
-      Alert.alert(
-        'Profile',
-        'Wallet address and settings will be shown here. Navigate to Profile screen to see full details.'
-      );
-    }
-  };
+
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Header with title and settings */}
+        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>ChainSpeed</Text>
-          <TouchableOpacity style={styles.settingsButton} onPress={openProfile}>
-            <Ionicons name="person-circle-outline" size={28} color="#333" />
-          </TouchableOpacity>
+          <Text style={styles.subtitle}>Safe driving tracker</Text>
         </View>
 
         {/* Main Speed Display */}
@@ -327,118 +346,119 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
           </View>
         </View>
 
-        {/* Blockchain Status */}
-        <View style={styles.blockchainStatus}>
+        {/* Drive Status */}
+        <View style={styles.driveStatus}>
           <View style={styles.statusRow}>
-            <View style={[styles.statusIndicator, stats.blockchainConnected ? styles.connected : styles.disconnected]} />
+            <View style={[styles.statusIndicator, stats.isTracking ? styles.connected : styles.disconnected]} />
             <Text style={styles.statusText}>
-                                {CURRENT_CHAIN_CONFIG.displayName} {stats.blockchainConnected ? 'Connected' : 'Disconnected'}
+              {stats.isTracking ? 'Currently Tracking' : 'Not Tracking'}
             </Text>
           </View>
           
-          <View style={styles.statusRow}>
-            <View style={[styles.statusIndicator, stats.teeEnabled ? styles.connected : styles.disconnected]} />
-            <Text style={styles.statusText}>
-              🔐 TEE Secure Enclave {stats.teeEnabled ? 'Active' : 'Unavailable'}
-            </Text>
-          </View>
-          
-          {stats.teeEnabled && (
+          {stats.driveToEarnEnabled && (
             <View style={styles.statusRow}>
-              <View style={[styles.statusIndicator, stats.teeSessionActive ? styles.connected : styles.warning]} />
+              <View style={[styles.statusIndicator, styles.connected]} />
               <Text style={styles.statusText}>
-                Session {stats.teeSessionActive ? 'Authenticated' : 'Requires Auth'}
+                🎁 Drive-to-Earn Active
               </Text>
             </View>
           )}
           
-          {stats.pendingCheckpoints > 0 && (
-            <Text style={styles.pendingText}>
-              {stats.pendingCheckpoints} checkpoints pending blockchain submission
-            </Text>
+          {stats.teeEnabled && stats.teeSessionActive && (
+            <View style={styles.statusRow}>
+              <View style={[styles.statusIndicator, styles.connected]} />
+              <Text style={styles.statusText}>
+                🔐 Secure Tracking Active
+              </Text>
+            </View>
           )}
-          
+
+          {/* {stats.walletBalance && (
+            <View style={styles.statusRow}>
+              <View style={[styles.statusIndicator, stats.hasLowBalance ? styles.warning : styles.connected]} />
+              <Text style={styles.statusText}>
+                💰 Balance: {stats.walletBalance}
+              </Text>
+            </View>
+          )}
+
+          {stats.hasLowBalance && (
+            <View style={styles.warningContainer}>
+              <Text style={styles.warningText}>
+                ⚠️ Low HBAR balance! Get testnet funds from portal.hedera.com/faucet to submit checkpoints.
+              </Text>
+            </View>
+          )} */}
         </View>
 
         {/* Control Buttons */}
         <View style={styles.buttonContainer}>
-          {!stats.isTracking ? (
+          {/* Step 1: Start TEE (Face ID) */}
+          {!teeInitialized && !stats.isTracking && (
+            <TouchableOpacity 
+              style={[styles.teeButton, isTEEAuthenticating && styles.buttonDisabled]} 
+              onPress={initializeTEE}
+              disabled={isTEEAuthenticating}
+            >
+              <Ionicons name="finger-print" size={20} color="white" style={{marginRight: 10}} />
+              <Text style={styles.buttonText}>
+                {isTEEAuthenticating ? 'Verifying Face ID...' : 'Start TEE (Face ID)'}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Step 2: Authenticate */}
+          {teeInitialized && !teeAuthenticated && !stats.isTracking && (
+            <TouchableOpacity 
+              style={styles.authenticateButton} 
+              onPress={authenticateForTracking}
+            >
+              <Ionicons name="shield-checkmark" size={20} color="white" style={{marginRight: 10}} />
+              <Text style={styles.buttonText}>Authenticate</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Step 3: Start Tracking */}
+          {teeAuthenticated && !stats.isTracking && (
             <TouchableOpacity style={styles.startButton} onPress={startTracking}>
+              <Ionicons name="play" size={20} color="white" style={{marginRight: 10}} />
               <Text style={styles.buttonText}>Start Tracking</Text>
             </TouchableOpacity>
-          ) : (
+          )}
+
+          {/* Step 4: Stop Tracking */}
+          {stats.isTracking && (
             <TouchableOpacity style={styles.stopButton} onPress={stopTracking}>
+              <Ionicons name="stop" size={20} color="white" style={{marginRight: 10}} />
               <Text style={styles.buttonText}>Stop Tracking</Text>
             </TouchableOpacity>
           )}
-          
-          {stats.teeEnabled && !stats.teeSessionActive && (
-            <TouchableOpacity style={styles.teeButton} onPress={authenticateTEE}>
-              <Ionicons name="finger-print" size={20} color="white" />
-              <Text style={styles.buttonText}>Authenticate TEE</Text>
-            </TouchableOpacity>
-          )}
-          
-          {!stats.teeEnabled && (
-            <TouchableOpacity style={styles.resetButton} onPress={resetTEE}>
-              <Ionicons name="refresh" size={20} color="white" />
-              <Text style={styles.buttonText}>Reset & Retry TEE</Text>
-            </TouchableOpacity>
-          )}
-          
-          {/* Rewards Button */}
-          <TouchableOpacity style={styles.rewardsButton} onPress={() => navigation?.push('/rewards')}>
-            <Ionicons name="gift" size={20} color="white" />
-            <Text style={styles.buttonText}>Drive-to-Earn Rewards</Text>
-            {stats.pendingXP > 0 && (
-              <View style={styles.xpBadgeButton}>
-                <Text style={styles.xpBadgeText}>+{stats.pendingXP}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-
         </View>
 
-        {/* Recent Records */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Recent Speed Records</Text>
-          {recentRecords.length > 0 ? (
-            recentRecords.slice(-5).map((record, index) => (
+        {/* Quick Tips */}
+        {!stats.isTracking && (
+          <View style={styles.tipsSection}>
+            <Text style={styles.tipTitle}>💡 Quick Tips</Text>
+            <Text style={styles.tipText}>• Start with &quot;Start TEE (Face ID)&quot; to verify yourself</Text>
+            <Text style={styles.tipText}>• Then &quot;Authenticate&quot; and &quot;Start Tracking&quot;</Text>
+            <Text style={styles.tipText}>• Drive safely to earn rewards with secure tracking</Text>
+          </View>
+        )}
+
+        {/* Recent Activity */}
+        {stats.isTracking && recentRecords.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Recent Activity</Text>
+            {recentRecords.slice(-3).map((record, index) => (
               <View key={index} style={styles.recordItem}>
                 <Text style={styles.recordTime}>
                   {new Date(record.timestamp).toLocaleTimeString()}
                 </Text>
                 <Text style={styles.recordSpeed}>{record.speed.toFixed(1)} mph</Text>
-                <Text style={styles.recordAccuracy}>±{record.accuracy.toFixed(0)}m</Text>
               </View>
-            ))
-          ) : (
-            <Text style={styles.emptyText}>No records yet</Text>
-          )}
-        </View>
-
-        {/* Recent Checkpoints */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Automatic Checkpoints</Text>
-          <Text style={styles.sectionSubtitle}>Created every 30 seconds while driving</Text>
-          {recentCheckpoints.length > 0 ? (
-            recentCheckpoints.slice(-3).map((checkpoint, index) => (
-              <View key={index} style={styles.checkpointItem}>
-                <Text style={styles.checkpointTime}>
-                  {new Date(checkpoint.endTime).toLocaleTimeString()}
-                </Text>
-                <Text style={styles.checkpointStats}>
-                  {checkpoint.recordCount} records, {checkpoint.avgSpeed} mph avg
-                </Text>
-                <Text style={styles.checkpointRoot}>
-                  Root: {checkpoint.merkleRoot.substring(0, 8)}...
-                </Text>
-              </View>
-            ))
-          ) : (
-            <Text style={styles.emptyText}>No checkpoints yet</Text>
-          )}
-        </View>
+            ))}
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -453,8 +473,6 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 20,
   },
@@ -462,10 +480,13 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: 'bold',
     color: '#333',
-    flex: 1,
+    textAlign: 'center',
   },
-  settingsButton: {
-    padding: 8,
+  subtitle: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 5,
   },
   speedDisplay: {
     backgroundColor: 'white',
@@ -534,6 +555,9 @@ const styles = StyleSheet.create({
     padding: 20,
     borderRadius: 30,
     marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
@@ -545,6 +569,9 @@ const styles = StyleSheet.create({
     padding: 20,
     borderRadius: 30,
     marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
@@ -638,6 +665,86 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     color: '#999',
   },
+  tipsSection: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 10,
+    padding: 20,
+    marginBottom: 20,
+    borderLeftWidth: 4,
+    borderLeftColor: '#4CAF50',
+  },
+  tipTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
+  },
+  tipText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 5,
+    lineHeight: 20,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  warningContainer: {
+    backgroundColor: '#fff3cd',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#ffc107',
+  },
+  warningText: {
+    fontSize: 12,
+    color: '#856404',
+    lineHeight: 16,
+  },
+  securePrompt: {
+    backgroundColor: '#f0f8ff',
+    borderRadius: 10,
+    padding: 15,
+    marginBottom: 15,
+    borderLeftWidth: 4,
+    borderLeftColor: '#9C27B0',
+  },
+  securePromptText: {
+    fontSize: 14,
+    color: '#333',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  teeSecondaryButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#9C27B0',
+    padding: 12,
+    borderRadius: 20,
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  teeSecondaryButtonText: {
+    color: '#9C27B0',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  authenticateButton: {
+    backgroundColor: '#2196F3',
+    padding: 20,
+    borderRadius: 30,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 5,
+  },
   checkpointItem: {
     paddingVertical: 10,
     borderBottomWidth: 1,
@@ -665,7 +772,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontStyle: 'italic',
   },
-  blockchainStatus: {
+  driveStatus: {
     backgroundColor: 'white',
     borderRadius: 10,
     padding: 15,

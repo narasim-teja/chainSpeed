@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { usePrivy, useEmbeddedEthereumWallet, getUserEmbeddedEthereumWallet } from '@privy-io/expo';
+import { usePrivy, getUserEmbeddedEthereumWallet } from '@privy-io/expo';
 import { getXPService, UserXPStats, GiftCardOption, UserGiftCard } from '../services/XPService';
 import { Colors } from '../constants/Colors';
 
@@ -21,7 +21,6 @@ interface RewardsScreenProps {
 
 export default function RewardsScreen({ navigation }: RewardsScreenProps) {
   const { user } = usePrivy();
-  const { wallets } = useEmbeddedEthereumWallet();
   const account = getUserEmbeddedEthereumWallet(user);
   const authenticated = !!user;
   
@@ -267,7 +266,7 @@ export default function RewardsScreen({ navigation }: RewardsScreenProps) {
     <SafeAreaView style={styles.container}>
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <Text style={styles.title}>Drive-to-Earn Rewards</Text>
+          <Text style={styles.title}>Rewards</Text>
           <Text style={styles.subtitle}>Earn XP for safe driving</Text>
         </View>
 
@@ -277,11 +276,10 @@ export default function RewardsScreen({ navigation }: RewardsScreenProps) {
         {renderUserGiftCards()}
 
         <View style={styles.infoSection}>
-          <Text style={styles.infoTitle}>How it works:</Text>
-          <Text style={styles.infoText}>• Earn 1 XP per mile driven safely (under 75 mph)</Text>
-          <Text style={styles.infoText}>• Get 5 XP bonus for daily driving streaks</Text>
-          <Text style={styles.infoText}>• Redeem XP for gift cards from popular retailers</Text>
-          <Text style={styles.infoText}>• Your driving data stays private and secure</Text>
+          <Text style={styles.infoTitle}>💡 How to earn XP:</Text>
+          <Text style={styles.infoText}>• Drive safely (under 75 mph) to earn 1 XP per mile</Text>
+          <Text style={styles.infoText}>• Maintain daily driving streaks for 5 XP</Text>
+          <Text style={styles.infoText}>• Redeem XP for real gift cards</Text>
         </View>
       </ScrollView>
 

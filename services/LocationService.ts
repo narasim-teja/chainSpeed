@@ -132,19 +132,25 @@ class LocationServiceClass {
 
   private async generateSignature(record: Omit<SpeedRecord, 'signature'>): Promise<string> {
     try {
-      // Use TEE hardware signing instead of software signing
+      // Try TEE hardware signing first if available and authenticated
       const TEEModule = require('./TEECryptoService');
       const teeService = TEEModule.getTEECryptoService();
       
-      const teeSignature = await teeService.signSpeedData(record);
-      
-      // Return the hardware signature with TEE marker
-      return teeSignature.signature;
+      // Check if TEE is ready before attempting to sign
+      const teeStatus = await teeService.getTEEStatus();
+      if (teeStatus.keyGenerated && teeStatus.sessionActive) {
+        console.log('🔐 Using TEE hardware signing');
+        const teeSignature = await teeService.signSpeedData(record);
+        return teeSignature.signature;
+      } else {
+        console.log('⚠️ TEE not ready (keyGenerated:', teeStatus.keyGenerated, ', sessionActive:', teeStatus.sessionActive, '), using software signing');
+        throw new Error('TEE not ready');
+      }
       
     } catch (error) {
-      console.warn('TEE signing failed, falling back to software signing:', error);
+      console.log('📝 Using software signing:', error instanceof Error ? error.message : String(error));
       
-      // Fallback to original software signing for compatibility
+      // Fallback to software signing
       const dataString = JSON.stringify(record);
       const previousHash = this.previousRecord ? 
         await Crypto.digestStringAsync(

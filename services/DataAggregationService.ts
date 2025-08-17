@@ -25,7 +25,7 @@ class DataAggregationService {
   private pendingBatches: Map<string, AggregationBatch> = new Map();
   private readonly BATCH_SIZE = 10; // Process every 10 miles
   private readonly UPDATE_INTERVAL = 300000; // 5 minutes
-  private updateTimer: NodeJS.Timeout | null = null;
+  private updateTimer: number | null = null;
 
   /**
    * Initialize the aggregation service

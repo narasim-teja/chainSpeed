@@ -19,14 +19,14 @@ class SpeedTrackingServiceClass {
 
       console.log('Initializing SpeedTrackingService...');
 
-      // Initialize TEE crypto service first
+      // Initialize TEE crypto service (but don't authenticate yet)
       try {
         const TEEModule = await import('./TEECryptoService');
         const teeService = TEEModule.getTEECryptoService();
         await teeService.initialize();
-        console.log('✅ TEE Crypto Service initialized');
+        console.log('✅ TEE Crypto Service initialized (authentication pending)');
       } catch (teeError) {
-        console.warn('⚠️ TEE initialization failed, using fallback:', teeError);
+        console.warn('⚠️ TEE initialization failed, using software fallback:', teeError);
         // Continue with software-based signing as fallback
         await this.cryptoService.getDeviceAttestation();
       }

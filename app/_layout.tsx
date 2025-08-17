@@ -1,5 +1,5 @@
 import Constants from "expo-constants";
-import { Stack } from "expo-router";
+import { Tabs } from "expo-router";
 import { PrivyProvider } from "@privy-io/expo";
 import { CURRENT_CHAIN_CONFIG } from "../constants/Blockchain";
 import { PrivyElements } from "@privy-io/expo/ui";
@@ -9,6 +9,7 @@ import {
   Inter_600SemiBold,
 } from "@expo-google-fonts/inter";
 import { useFonts } from "expo-font";
+import { Ionicons } from '@expo/vector-icons';
 
 export default function RootLayout() {
   useFonts({
@@ -40,11 +41,53 @@ export default function RootLayout() {
         },
       ]}
     >
-      <Stack>
-        <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="profile" options={{ headerShown: false }} />
-        <Stack.Screen name="rewards" options={{ headerShown: false }} />
-      </Stack>
+      <Tabs
+        screenOptions={{
+          headerShown: false,
+          tabBarActiveTintColor: '#4CAF50',
+          tabBarInactiveTintColor: '#666',
+          tabBarStyle: {
+            backgroundColor: 'white',
+            borderTopWidth: 1,
+            borderTopColor: '#f0f0f0',
+            height: 90,
+            paddingBottom: 20,
+            paddingTop: 10,
+          },
+          tabBarLabelStyle: {
+            fontSize: 12,
+            fontWeight: '500',
+          },
+        }}
+      >
+        <Tabs.Screen
+          name="index"
+          options={{
+            title: 'Track',
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="speedometer" size={size} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="rewards"
+          options={{
+            title: 'Rewards',
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="gift" size={size} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="profile"
+          options={{
+            title: 'Profile',
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="person" size={size} color={color} />
+            ),
+          }}
+        />
+      </Tabs>
       <PrivyElements />
     </PrivyProvider>
   );

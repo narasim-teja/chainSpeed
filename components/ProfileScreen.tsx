@@ -15,7 +15,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { usePrivy, useEmbeddedEthereumWallet, getUserEmbeddedEthereumWallet } from '@privy-io/expo';
-import { useRouter } from 'expo-router';
+
 import { getBlockchainService } from '../services/BlockchainService';
 import { getSpeedTrackingService } from '../services/SpeedTrackingService';
 import { getMerkleService } from '../services/MerkleService';
@@ -27,12 +27,10 @@ interface ProfileScreenProps {
 
 export default function ProfileScreen({ navigation }: ProfileScreenProps) {
   const { user, logout } = usePrivy();
-  const { wallets, create } = useEmbeddedEthereumWallet();
+  const { create } = useEmbeddedEthereumWallet();
   const account = getUserEmbeddedEthereumWallet(user);
   const authenticated = !!user;
-  const router = useRouter();
   const [pendingCheckpoints, setPendingCheckpoints] = useState(0);
-  const [networkInfo, setNetworkInfo] = useState<any>(null);
   
   // Speed Proof Query states
   const [showProofModal, setShowProofModal] = useState(false);
@@ -71,11 +69,9 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
   const loadProfileData = async () => {
     const blockchainService = getBlockchainService();
     const pending = await blockchainService.getPendingCheckpoints();
-    const info = blockchainService.getNetworkInfo();
     
     setPendingCheckpoints(pending.length);
     setPendingCheckpointsCount(pending.length);
-    setNetworkInfo(info);
   };
 
   const copyToClipboard = async (text: string, label: string) => {
@@ -162,7 +158,6 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
       setIsLoadingData(true);
       
       const speedTrackingService = getSpeedTrackingService();
-      const merkleService = getMerkleService();
       
       // Get records from the last 30 days
       const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
@@ -264,7 +259,6 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
       const speedTrackingService = getSpeedTrackingService();
       const blockchainService = getBlockchainService();
-      const merkleService = getMerkleService();
 
       // 1. Get local records and checkpoints for the timeframe
       const exportData = await speedTrackingService.exportDataForTimeRange(startTime, endTime);
@@ -399,101 +393,31 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
       <ScrollView ref={scrollViewRef} contentContainerStyle={styles.scrollContent}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity 
-            style={styles.backButton} 
-            onPress={() => router.back()}
-          >
-            <Ionicons name="arrow-back" size={24} color="#333" />
-          </TouchableOpacity>
-          <Text style={styles.title}>Profile & Settings</Text>
-          <View style={styles.placeholder} />
+          <Text style={styles.title}>Profile</Text>
+          <Text style={styles.subtitle}>Generate driving proofs</Text>
         </View>
 
         {/* Wallet Info */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { marginBottom: 15 }]}>Wallet Information</Text>
+          <Text style={styles.sectionTitle}>Your Wallet</Text>
           
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Status:</Text>
-            <Text style={[styles.infoValue, authenticated ? styles.connected : styles.disconnected]}>
-              {authenticated ? 'Connected' : 'Disconnected'}
-            </Text>
-          </View>
-
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Address:</Text>
-            <TouchableOpacity 
-              style={styles.addressContainer}
-              onPress={() => copyToClipboard(getWalletAddress(), 'Wallet address')}
-            >
-              <Text style={styles.addressText}>
-                {getWalletAddress()}
-              </Text>
-              <Ionicons name="copy-outline" size={16} color="#666" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Network Info */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Network</Text>
-            <View style={styles.statusBadge}>
-              <Ionicons name="checkmark-circle" size={16} color="#4CAF50" />
-              <Text style={styles.statusText}>Connected</Text>
+          <TouchableOpacity 
+            style={styles.walletCard}
+            onPress={() => copyToClipboard(getWalletAddress(), 'Wallet address')}
+          >
+            <View style={styles.walletInfo}>
+              <Ionicons name="wallet" size={24} color="#4CAF50" />
+              <View style={styles.walletDetails}>
+                <Text style={styles.walletStatus}>
+                  {authenticated ? 'Connected' : 'Disconnected'}
+                </Text>
+                <Text style={styles.walletAddress} numberOfLines={1}>
+                  {getWalletAddress()}
+                </Text>
+              </View>
             </View>
-          </View>
-          
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Network:</Text>
-            <Text style={styles.infoValue}>{networkInfo?.network || CURRENT_CHAIN_CONFIG.name}</Text>
-          </View>
-
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Chain ID:</Text>
-            <Text style={styles.infoValue}>{networkInfo?.chainId || '296'}</Text>
-          </View>
-
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Contract:</Text>
-            <TouchableOpacity 
-              style={styles.addressContainer}
-              onPress={() => copyToClipboard(CONTRACT_CONFIG.address, 'Contract address')}
-            >
-              <Text style={styles.contractText}>
-                {CONTRACT_CONFIG.address}
-              </Text>
-              <Ionicons name="copy-outline" size={16} color="#666" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Blockchain Status */}
-        <View style={styles.section}>
-          {/* <Text style={[styles.sectionTitle, { marginBottom: 15 }]}>Blockchain Status</Text>
-          
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Connection:</Text>
-            <Text style={[styles.infoValue, networkInfo?.connected ? styles.connected : styles.disconnected]}>
-              {networkInfo?.connected ? 'Connected' : 'Disconnected'}
-            </Text>
-          </View>
-
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Pending Checkpoints:</Text>
-            <Text style={[styles.infoValue, pendingCheckpointsCount > 0 ? styles.warning : styles.connected]}>
-              {pendingCheckpointsCount}
-            </Text>
-          </View> */}
-          
-          {pendingCheckpointsCount > 0 && (
-            <View style={styles.warningContainer}>
-              <Ionicons name="warning" size={16} color="#FF9800" />
-              <Text style={styles.warningText}>
-                {pendingCheckpointsCount} checkpoints pending blockchain submission. This may reduce proof verification rate.
-              </Text>
-            </View>
-          )}
+            <Ionicons name="copy-outline" size={20} color="#666" />
+          </TouchableOpacity>
         </View>
 
         {/* Speed Proof Query */}
@@ -514,17 +438,57 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
             <Text style={styles.buttonText}>Generate Speed Proof</Text>
           </TouchableOpacity>
 
+          {/* Manual Delete Checkpoints */}
+          <TouchableOpacity 
+            style={[styles.dangerButton, { marginTop: 10 }]}
+            onPress={async () => {
+              Alert.alert(
+                'Clear All Checkpoints',
+                'This will delete ALL locally stored checkpoints and pending submissions. This action cannot be undone. Use this if checkpoints are stuck or causing issues.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { 
+                    text: 'Clear All', 
+                    style: 'destructive',
+                    onPress: async () => {
+                      try {
+                        const blockchainService = getBlockchainService();
+                        const merkleService = getMerkleService();
+                        
+                        // Clear all local checkpoints
+                        await merkleService.clearAllCheckpoints();
+                        
+                        // Clear pending checkpoints
+                        await blockchainService.clearAllPendingCheckpoints();
+                        
+                        Alert.alert('Success', 'All checkpoints cleared successfully!');
+                        await loadProfileData();
+                        
+                      } catch (error) {
+                        console.error('Failed to clear checkpoints:', error);
+                        Alert.alert('Error', 'Failed to clear checkpoints: ' + (error instanceof Error ? error.message : String(error)));
+                      }
+                    }
+                  }
+                ]
+              );
+            }}
+          >
+            <Ionicons name="trash-outline" size={20} color="white" />
+            <Text style={styles.buttonText}>Clear All Checkpoints</Text>
+          </TouchableOpacity>
+
           {/* Manual retry for missing checkpoints */}
           <TouchableOpacity 
             style={[styles.warningButton, { marginTop: 10 }]}
             onPress={async () => {
               Alert.alert(
                 'Retry Failed Submissions',
-                'This will attempt to submit any locally stored checkpoints that failed to reach the blockchain. This may improve your proof verification rate.',
+                'This will attempt to submit up to 5 locally stored checkpoints that failed to reach the blockchain. Rate limited to avoid API issues.',
                 [
                   { text: 'Cancel', style: 'cancel' },
                   { 
-                    text: 'Retry All', 
+                    text: 'Retry 5', 
                     onPress: async () => {
                       try {
                         const blockchainService = getBlockchainService();
@@ -534,11 +498,22 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                         const allLocalCheckpoints = await merkleService.getCheckpoints();
                         console.log(`Found ${allLocalCheckpoints.length} local checkpoints`);
                         
+                        // Rate limiting: only process first 5 checkpoints to avoid rate limits
+                        const maxRetries = 3;
+                        const checkpointsToRetry = allLocalCheckpoints.slice(0, maxRetries);
+                        
                         let retryCount = 0;
                         let successCount = 0;
+                        let rateLimitHit = false;
                         
-                        for (const localCheckpoint of allLocalCheckpoints) {
+                        for (const localCheckpoint of checkpointsToRetry) {
                           try {
+                            // Add delay between requests to avoid rate limiting
+                            if (retryCount > 0) {
+                              console.log('⏳ Waiting 2 seconds to avoid rate limiting...');
+                              await new Promise(resolve => setTimeout(resolve, 2000));
+                            }
+                            
                             // Check if this checkpoint exists on blockchain
                             const blockchainCheckpoint = await blockchainService.getCheckpointByRoot(localCheckpoint.merkleRoot);
                             
@@ -553,14 +528,31 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                               }
                               retryCount++;
                             }
-                          } catch (error) {
+                          } catch (error: any) {
                             console.error('Failed to retry checkpoint submission:', error);
+                            
+                            // Check if we hit rate limiting
+                            if (error.message && (error.message.includes('rate limit') || error.message.includes('too many requests'))) {
+                              rateLimitHit = true;
+                              console.warn('⚠️ Rate limit hit, stopping retries');
+                              break;
+                            }
                           }
+                        }
+                        
+                        let message = `Attempted to retry ${retryCount} checkpoints. ${successCount} were successfully submitted.`;
+                        
+                        if (rateLimitHit) {
+                          message += '\n\n⚠️ Rate limit reached. Wait a few minutes before trying again.';
+                        }
+                        
+                        if (allLocalCheckpoints.length > maxRetries) {
+                          message += `\n\n💡 ${allLocalCheckpoints.length - maxRetries} more checkpoints available. Run again to retry more.`;
                         }
                         
                         Alert.alert(
                           'Retry Complete',
-                          `Attempted to retry ${retryCount} failed checkpoints. ${successCount} were successfully submitted to blockchain.`,
+                          message,
                           [{ text: 'OK', onPress: () => loadProfileData() }]
                         );
                         
@@ -575,7 +567,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
             }}
           >
             <Ionicons name="refresh-outline" size={20} color="white" />
-            <Text style={styles.buttonText}>Retry Failed Submissions</Text>
+            <Text style={styles.buttonText}>Retry 5 Checkpoints</Text>
           </TouchableOpacity>
         </View>
 
@@ -647,7 +639,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
               <Ionicons name="close" size={24} color="#333" />
             </TouchableOpacity>
             <Text style={styles.modalTitle}>Generate Speed Proof</Text>
-            <View style={styles.placeholder} />
+
         </View>
 
                     <ScrollView style={styles.modalContent}>
@@ -976,23 +968,50 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 20,
   },
-  backButton: {
-    padding: 8,
-  },
   title: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#333',
-    flex: 1,
     textAlign: 'center',
   },
-  placeholder: {
-    width: 40,
+  subtitle: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 5,
+  },
+  walletCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f8f9fa',
+    padding: 15,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e9ecef',
+  },
+  walletInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  walletDetails: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  walletStatus: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  walletAddress: {
+    fontSize: 12,
+    color: '#666',
+    fontFamily: 'monospace',
+    marginTop: 2,
   },
   section: {
     backgroundColor: 'white',
@@ -1111,6 +1130,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 15,
     borderRadius: 10,
+    marginBottom: 10,
   },
   warningButton: {
     backgroundColor: '#9E9E9E',

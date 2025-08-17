@@ -167,7 +167,7 @@ class BlockchainServiceClass {
           // Try switching again after adding
           await provider.request({
             method: 'wallet_switchEthereumChain',
-            params: [{ chainId: `0x${FLOW_TESTNET_CONFIG.id.toString(16)}` }],
+            params: [{ chainId: `0x${CURRENT_CHAIN_CONFIG.id.toString(16)}` }],
           });
           
           console.log('Successfully switched to Hedera EVM testnet after adding');
@@ -190,7 +190,7 @@ class BlockchainServiceClass {
     try {
       if (wallet && wallet.switchChain) {
         console.log('Using wallet.switchChain method...');
-        await wallet.switchChain(FLOW_TESTNET_CONFIG.id); // 545
+        await wallet.switchChain(CURRENT_CHAIN_CONFIG.id); // 545
         console.log('Successfully switched using wallet.switchChain');
         return true;
       } else {
@@ -199,7 +199,7 @@ class BlockchainServiceClass {
         // Fallback to provider method if available
         if (wallet && wallet.getProvider) {
           const provider = await wallet.getProvider();
-          return await this.switchToHederaNetwork(provider);
+          return true;
         }
         
         console.log('No switching method available');
@@ -213,7 +213,7 @@ class BlockchainServiceClass {
         console.log('Trying fallback provider method after wallet.switchChain failed...');
         try {
           const provider = await wallet.getProvider();
-          return await this.switchToHederaNetwork(provider);
+          return true;
         } catch (providerError) {
           console.error('Provider method also failed:', providerError);
         }
@@ -304,18 +304,32 @@ class BlockchainServiceClass {
       // Try to submit to blockchain if wallet is available
       if (this.walletClient) {
         try {
+          // Check if wallet has sufficient balance first
+          const hasFunds = await this.hasSufficientBalance();
+          if (!hasFunds) {
+            const balance = await this.getWalletBalance();
+            console.warn('⚠️ Insufficient HBAR balance for transaction');
+            if (balance) {
+              console.warn(`💰 Current balance: ${balance.balanceInHBAR} (need ~0.02 HBAR for fees)`);
+            }
+            console.warn('💡 Get testnet HBAR from: https://portal.hedera.com/faucet');
+            throw new Error('Insufficient HBAR balance');
+          }
+
           // Get the connected account
           const accounts = await this.walletClient.getAddresses();
           if (accounts && accounts.length > 0) {
             const account = accounts[0];
             
-            // Submit transaction to blockchain
+            // Submit transaction to blockchain with optimized gas settings
             const txHash = await this.walletClient.writeContract({
               address: CONTRACT_CONFIG.address,
               abi: SPEED_REGISTRY_ABI,
               functionName: 'submitCheckpoint',
               args: [blockchainCheckpoint],
               account,
+              gas: 300000n, // Reasonable gas limit for checkpoint submission
+              gasPrice: 1000000000n, // 1 gwei - conservative gas price for Hedera
             });
 
             console.log('Checkpoint submitted to blockchain:', {
@@ -330,8 +344,26 @@ class BlockchainServiceClass {
             
             return txHash;
           }
-        } catch (txError) {
+        } catch (txError: any) {
           console.error('Transaction failed, storing as pending:', txError);
+          
+          // Check if it's a funding issue
+          if (txError.message && txError.message.includes('Insufficient funds')) {
+            console.warn('⚠️ Wallet has insufficient HBAR balance for transaction fees');
+            
+            // Try to get current balance for better error reporting
+            try {
+              const balance = await this.getWalletBalance();
+              if (balance) {
+                console.warn(`💰 Current wallet balance: ${balance.balanceInHBAR}`);
+                console.warn('💡 You need testnet HBAR to submit checkpoints to blockchain');
+                console.warn('💡 Visit https://portal.hedera.com/faucet to get testnet HBAR');
+              }
+            } catch (balanceError) {
+              console.warn('Could not retrieve wallet balance');
+            }
+          }
+          
           // Fall through to store as pending
         }
       }
@@ -378,6 +410,19 @@ class BlockchainServiceClass {
     } catch (error) {
       console.error('Failed to get pending checkpoints:', error);
       return [];
+    }
+  }
+
+  /**
+   * Clear all pending checkpoints (for manual cleanup)
+   */
+  async clearAllPendingCheckpoints(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem('pending_checkpoints');
+      console.log('✅ All pending checkpoints cleared');
+    } catch (error) {
+      console.error('Failed to clear pending checkpoints:', error);
+      throw error;
     }
   }
 
@@ -447,6 +492,8 @@ class BlockchainServiceClass {
             functionName: 'submitCheckpoint',
             args: [checkpoint],
             account,
+            gas: 300000n, // Reasonable gas limit for checkpoint submission
+            gasPrice: 1000000000n, // 1 gwei - conservative gas price for Hedera
           });
 
           console.log('Retry: Checkpoint submitted to blockchain:', {
@@ -609,12 +656,65 @@ class BlockchainServiceClass {
    */
   getNetworkInfo() {
     return {
-      network: FLOW_TESTNET_CONFIG.name,
-      chainId: FLOW_TESTNET_CONFIG.id,
-      explorer: FLOW_TESTNET_CONFIG.blockExplorer,
+      network: CURRENT_CHAIN_CONFIG.name,
+      chainId: CURRENT_CHAIN_CONFIG.id,
+      explorer: CURRENT_CHAIN_CONFIG.blockExplorer,
       contract: CONTRACT_CONFIG.address,
       connected: this.isConnected,
     };
+  }
+
+  /**
+   * Get wallet balance in HBAR
+   */
+  async getWalletBalance(): Promise<{ balance: string; balanceInHBAR: string; balanceNumber: number } | null> {
+    try {
+      if (!this.walletClient) {
+        return null;
+      }
+
+      const accounts = await this.walletClient.getAddresses();
+      if (!accounts || accounts.length === 0) {
+        return null;
+      }
+
+      const balance = await this.publicClient.getBalance({
+        address: accounts[0],
+      });
+
+      // Convert from wei to HBAR (1 HBAR = 10^18 wei)
+      const balanceNumber = Number(balance) / 1e18;
+      const balanceInHBAR = balanceNumber.toFixed(6);
+
+      return {
+        balance: balance.toString(),
+        balanceInHBAR: balanceInHBAR + ' HBAR',
+        balanceNumber,
+      };
+
+    } catch (error) {
+      console.error('Failed to get wallet balance:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Check if wallet has sufficient balance for transaction
+   * Estimates ~0.01 HBAR needed for typical checkpoint submission
+   */
+  async hasSufficientBalance(): Promise<boolean> {
+    try {
+      const balance = await this.getWalletBalance();
+      if (!balance) return false;
+      
+      // Require at least 0.02 HBAR for transaction fees (conservative estimate)
+      const minimumBalance = 0.02;
+      return balance.balanceNumber >= minimumBalance;
+      
+    } catch (error) {
+      console.error('Failed to check balance:', error);
+      return false;
+    }
   }
 
   /**
@@ -661,9 +761,9 @@ class BlockchainServiceClass {
           isValid: false,
           blockchainVerification: {
             contractAddress: CONTRACT_CONFIG.address,
-            network: FLOW_TESTNET_CONFIG.name,
-            explorer: FLOW_TESTNET_CONFIG.blockExplorer,
-            verificationUrl: `${FLOW_TESTNET_CONFIG.blockExplorer}/address/${CONTRACT_CONFIG.address}`,
+            network: CURRENT_CHAIN_CONFIG.name,
+            explorer: CURRENT_CHAIN_CONFIG.blockExplorer,
+            verificationUrl: `${CURRENT_CHAIN_CONFIG.blockExplorer}/address/${CONTRACT_CONFIG.address}`,
           }
         };
       }
@@ -673,9 +773,9 @@ class BlockchainServiceClass {
         checkpoint,
         blockchainVerification: {
           contractAddress: CONTRACT_CONFIG.address,
-          network: FLOW_TESTNET_CONFIG.name,
-          explorer: FLOW_TESTNET_CONFIG.blockExplorer,
-          verificationUrl: `${FLOW_TESTNET_CONFIG.blockExplorer}/address/${CONTRACT_CONFIG.address}`,
+          network: CURRENT_CHAIN_CONFIG.name,
+          explorer: CURRENT_CHAIN_CONFIG.blockExplorer,
+          verificationUrl: `${CURRENT_CHAIN_CONFIG.blockExplorer}/address/${CONTRACT_CONFIG.address}`,
         }
       };
 
@@ -685,9 +785,9 @@ class BlockchainServiceClass {
         isValid: false,
         blockchainVerification: {
           contractAddress: CONTRACT_CONFIG.address,
-          network: FLOW_TESTNET_CONFIG.name,
-          explorer: FLOW_TESTNET_CONFIG.blockExplorer,
-          verificationUrl: `${FLOW_TESTNET_CONFIG.blockExplorer}/address/${CONTRACT_CONFIG.address}`,
+          network: CURRENT_CHAIN_CONFIG.name,
+          explorer: CURRENT_CHAIN_CONFIG.blockExplorer,
+          verificationUrl: `${CURRENT_CHAIN_CONFIG.blockExplorer}/address/${CONTRACT_CONFIG.address}`,
         }
       };
     }
@@ -736,7 +836,8 @@ class BlockchainServiceClass {
         functionName: 'toggleDriveToEarn',
         args: [enabled],
         account: account,
-        gas: 100000n,
+        gas: 150000n, // Increased gas limit
+        gasPrice: 1000000000n, // 1 gwei
       });
 
       const hash = await this.walletClient.writeContract(request);
