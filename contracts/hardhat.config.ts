@@ -25,19 +25,20 @@ const config: HardhatUserConfig & { etherscan?: any } = {
       chainId: 295,
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY.startsWith('0x') ? process.env.PRIVATE_KEY : '0x' + process.env.PRIVATE_KEY] : [],
     },
-    // Legacy Flow networks (for backwards compatibility)
-    flowTestnet: {
-      url: "https://testnet.hashio.io/api",
-      chainId: 296,
+    // Zircuit Testnet
+    zircuitTestnet: {
+      url: "https://garfield-testnet.zircuit.com/",
+      chainId: 48898,
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY.startsWith('0x') ? process.env.PRIVATE_KEY : '0x' + process.env.PRIVATE_KEY] : [],
     },
+
     // Local development
     hardhat: {
       chainId: 31337,
     },
   },
   etherscan: {
-    // Hedera block explorer
+    // Block explorer API keys
     apiKey: {
       hederaTestnet: "no-api-key-needed",
       hederaMainnet: "no-api-key-needed",

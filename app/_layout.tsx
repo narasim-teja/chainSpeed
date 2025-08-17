@@ -1,6 +1,7 @@
 import Constants from "expo-constants";
 import { Stack } from "expo-router";
 import { PrivyProvider } from "@privy-io/expo";
+import { CURRENT_CHAIN_CONFIG } from "../constants/Blockchain";
 import { PrivyElements } from "@privy-io/expo/ui";
 import {
   Inter_400Regular,
@@ -8,7 +9,6 @@ import {
   Inter_600SemiBold,
 } from "@expo-google-fonts/inter";
 import { useFonts } from "expo-font";
-import { FLOW_TESTNET_CONFIG } from "../constants/Blockchain";
 
 export default function RootLayout() {
   useFonts({
@@ -22,19 +22,19 @@ export default function RootLayout() {
       clientId={Constants.expoConfig?.extra?.privyClientId}
       supportedChains={[
         {
-          id: FLOW_TESTNET_CONFIG.id,
-          name: FLOW_TESTNET_CONFIG.name,
-          network: FLOW_TESTNET_CONFIG.name.toLowerCase().replace(/\s+/g, '-'),
-          nativeCurrency: FLOW_TESTNET_CONFIG.nativeCurrency,
+          id: CURRENT_CHAIN_CONFIG.id,
+          name: CURRENT_CHAIN_CONFIG.name,
+          network: CURRENT_CHAIN_CONFIG.name.toLowerCase().replace(/\s+/g, '-'),
+          nativeCurrency: CURRENT_CHAIN_CONFIG.nativeCurrency,
           rpcUrls: {
             default: {
-              http: [FLOW_TESTNET_CONFIG.rpcUrl],
+              http: [CURRENT_CHAIN_CONFIG.rpcUrl],
             },
           },
           blockExplorers: {
             default: {
-              name: 'Hedera Testnet Explorer',
-              url: FLOW_TESTNET_CONFIG.blockExplorer,
+              name: `${CURRENT_CHAIN_CONFIG.displayName} Explorer`,
+              url: CURRENT_CHAIN_CONFIG.blockExplorer,
             },
           },
         },

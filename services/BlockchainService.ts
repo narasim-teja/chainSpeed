@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CheckpointData } from './MerkleService';
 import { getCryptoService } from './CryptoService';
 import * as Crypto from 'expo-crypto';
-import { FLOW_TESTNET_CONFIG, CONTRACT_CONFIG, SPEED_REGISTRY_ABI, XP_REWARDS_ABI } from '../constants/Blockchain';
+import { CURRENT_CHAIN_CONFIG, CONTRACT_CONFIG, SPEED_REGISTRY_ABI, XP_REWARDS_ABI } from '../constants/Blockchain';
 
 export interface BlockchainCheckpoint {
   merkleRoot: string;
@@ -18,16 +18,16 @@ export interface BlockchainCheckpoint {
   deviceAttestation: string;
 }
 
-// Define Hedera EVM Testnet chain for viem
-const hederaEvmTestnet = defineChain({
-  id: FLOW_TESTNET_CONFIG.id, // Using FLOW_TESTNET_CONFIG for backwards compatibility
-  name: FLOW_TESTNET_CONFIG.name,
-  nativeCurrency: FLOW_TESTNET_CONFIG.nativeCurrency,
+// Define current chain for viem
+const currentChain = defineChain({
+  id: CURRENT_CHAIN_CONFIG.id,
+  name: CURRENT_CHAIN_CONFIG.name,
+  nativeCurrency: CURRENT_CHAIN_CONFIG.nativeCurrency,
   rpcUrls: {
-    default: { http: [FLOW_TESTNET_CONFIG.rpcUrl] },
+    default: { http: [CURRENT_CHAIN_CONFIG.rpcUrl] },
   },
   blockExplorers: {
-    default: { name: 'Hedera Testnet Explorer', url: FLOW_TESTNET_CONFIG.blockExplorer },
+    default: { name: `${CURRENT_CHAIN_CONFIG.displayName} Explorer`, url: CURRENT_CHAIN_CONFIG.blockExplorer },
   },
 });
 
@@ -74,8 +74,8 @@ class BlockchainServiceClass {
   private initializeClients() {
     // Initialize public client for reading data
     this.publicClient = createPublicClient({
-      chain: hederaEvmTestnet,
-      transport: http(FLOW_TESTNET_CONFIG.rpcUrl),
+      chain: currentChain,
+      transport: http(CURRENT_CHAIN_CONFIG.rpcUrl),
     });
   }
 
@@ -92,7 +92,7 @@ class BlockchainServiceClass {
           
           this.walletClient = createWalletClient({
             account: account,
-            chain: hederaEvmTestnet,
+            chain: currentChain,
             transport: custom(provider),
           });
           
@@ -105,21 +105,21 @@ class BlockchainServiceClass {
         
         // Fallback: create wallet client without account (will fail on writes)
         this.walletClient = createWalletClient({
-          chain: hederaEvmTestnet,
+          chain: currentChain,
           transport: custom(provider),
         });
         console.warn('Wallet client created without account - write operations may fail');
       }
       
-      // Try to switch to Hedera EVM testnet if not already on it
-      await this.switchToHederaNetwork(provider);
+      // Try to switch to current chain if not already on it
+      await this.switchToCurrentChain(provider);
     }
   }
 
   /**
-   * Switch wallet to Hedera EVM testnet using Privy's method
+   * Switch wallet to current chain using Privy's method
    */
-  private async switchToHederaNetwork(provider: any): Promise<boolean> {
+  private async switchToCurrentChain(provider: any): Promise<boolean> {
     try {
       // Check current chain
       const currentChainId = await provider.request({ method: 'eth_chainId' });
@@ -127,38 +127,38 @@ class BlockchainServiceClass {
       
       console.log('Current wallet chain ID:', currentChainIdDecimal);
       
-      if (currentChainIdDecimal === FLOW_TESTNET_CONFIG.id) {
-        console.log('Wallet already on Hedera EVM testnet');
+      if (currentChainIdDecimal === CURRENT_CHAIN_CONFIG.id) {
+        console.log(`Wallet already on ${CURRENT_CHAIN_CONFIG.displayName}`);
         return true;
       }
       
-      console.log('Switching wallet to Hedera EVM testnet using provider method...');
+      console.log(`Switching wallet to ${CURRENT_CHAIN_CONFIG.displayName} using provider method...`);
       
       // Use Privy's official method for React Native
       await provider.request({
         method: 'wallet_switchEthereumChain',
-        params: [{ chainId: `0x${FLOW_TESTNET_CONFIG.id.toString(16)}` }], // 0x221 for chain ID 545
+        params: [{ chainId: `0x${CURRENT_CHAIN_CONFIG.id.toString(16)}` }],
       });
       
-      console.log('Successfully switched to Hedera EVM testnet');
+      console.log(`Successfully switched to ${CURRENT_CHAIN_CONFIG.displayName}`);
       return true;
       
     } catch (error: any) {
-              console.error('Error switching to Hedera network:', error);
+              console.error(`Error switching to ${CURRENT_CHAIN_CONFIG.displayName}:`, error);
       
       // If the chain doesn't exist, try to add it first
       if (error.code === 4902 || error.message?.includes('Unsupported chainId')) {
-        console.log('Hedera EVM testnet not recognized, attempting to add it...');
+        console.log(`${CURRENT_CHAIN_CONFIG.displayName} not recognized, attempting to add it...`);
         
         try {
           await provider.request({
             method: 'wallet_addEthereumChain',
             params: [{
-              chainId: `0x${FLOW_TESTNET_CONFIG.id.toString(16)}`,
-              chainName: FLOW_TESTNET_CONFIG.name,
-              nativeCurrency: FLOW_TESTNET_CONFIG.nativeCurrency,
-              rpcUrls: [FLOW_TESTNET_CONFIG.rpcUrl],
-              blockExplorerUrls: [FLOW_TESTNET_CONFIG.blockExplorer],
+              chainId: `0x${CURRENT_CHAIN_CONFIG.id.toString(16)}`,
+              chainName: CURRENT_CHAIN_CONFIG.name,
+              nativeCurrency: CURRENT_CHAIN_CONFIG.nativeCurrency,
+              rpcUrls: [CURRENT_CHAIN_CONFIG.rpcUrl],
+              blockExplorerUrls: [CURRENT_CHAIN_CONFIG.blockExplorer],
             }]
           });
           
@@ -227,10 +227,10 @@ class BlockchainServiceClass {
     try {
       const blockNumber = await this.publicClient.getBlockNumber();
       this.isConnected = true;
-      console.log('Connected to Hedera EVM Testnet, block:', blockNumber);
+              console.log(`Connected to ${CURRENT_CHAIN_CONFIG.displayName}, block:`, blockNumber);
       return true;
     } catch (error) {
-      console.error('Failed to connect to Hedera EVM:', error);
+      console.error(`Failed to connect to ${CURRENT_CHAIN_CONFIG.displayName}:`, error);
       this.isConnected = false;
       return false;
     }

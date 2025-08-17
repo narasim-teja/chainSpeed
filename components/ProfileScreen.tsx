@@ -19,7 +19,7 @@ import { useRouter } from 'expo-router';
 import { getBlockchainService } from '../services/BlockchainService';
 import { getSpeedTrackingService } from '../services/SpeedTrackingService';
 import { getMerkleService } from '../services/MerkleService';
-import { CONTRACT_CONFIG } from '../constants/Blockchain';
+import { CONTRACT_CONFIG, CURRENT_CHAIN_CONFIG } from '../constants/Blockchain';
 
 interface ProfileScreenProps {
   navigation?: any;
@@ -354,7 +354,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
           checkpointsVerified: verificationResults.filter(r => r.isValid).length,
           blockchainVerified: verificationResults.every(r => r.isValid),
           contractAddress: CONTRACT_CONFIG.address,
-          network: 'Hedera EVM Testnet'
+          network: CURRENT_CHAIN_CONFIG.name
         },
         checkpoints: verificationResults,
         deviceAttestation: exportData.attestation,
@@ -446,7 +446,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
           
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Network:</Text>
-            <Text style={styles.infoValue}>{networkInfo?.network || 'Hedera Testnet'}</Text>
+            <Text style={styles.infoValue}>{networkInfo?.network || CURRENT_CHAIN_CONFIG.name}</Text>
           </View>
 
           <View style={styles.infoRow}>
@@ -470,7 +470,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
         {/* Blockchain Status */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { marginBottom: 15 }]}>Blockchain Status</Text>
+          {/* <Text style={[styles.sectionTitle, { marginBottom: 15 }]}>Blockchain Status</Text>
           
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Connection:</Text>
@@ -484,7 +484,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
             <Text style={[styles.infoValue, pendingCheckpointsCount > 0 ? styles.warning : styles.connected]}>
               {pendingCheckpointsCount}
             </Text>
-          </View>
+          </View> */}
           
           {pendingCheckpointsCount > 0 && (
             <View style={styles.warningContainer}>
@@ -911,7 +911,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                 <View style={styles.legalNotice}>
                   <Ionicons name="information-circle" size={20} color="#FF9800" />
                   <Text style={styles.legalText}>
-                    This proof is cryptographically verified on the Hedera blockchain and can be used as evidence in legal proceedings.
+                    This proof is cryptographically verified on the {CURRENT_CHAIN_CONFIG.displayName} blockchain and can be used as evidence in legal proceedings.
           </Text>
         </View>
 

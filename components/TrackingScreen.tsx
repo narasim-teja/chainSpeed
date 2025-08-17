@@ -16,6 +16,7 @@ import { SpeedRecord } from '../services/LocationService';
 import { CheckpointData } from '../services/MerkleService';
 import { getBlockchainService } from '../services/BlockchainService';
 import { getXPService } from '../services/XPService';
+import { CURRENT_CHAIN_CONFIG } from '../constants/Blockchain';
 
 interface TrackingStats {
   currentSpeed: number;
@@ -331,7 +332,7 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
           <View style={styles.statusRow}>
             <View style={[styles.statusIndicator, stats.blockchainConnected ? styles.connected : styles.disconnected]} />
             <Text style={styles.statusText}>
-                                Hedera Blockchain {stats.blockchainConnected ? 'Connected' : 'Disconnected'}
+                                {CURRENT_CHAIN_CONFIG.displayName} {stats.blockchainConnected ? 'Connected' : 'Disconnected'}
             </Text>
           </View>
           
