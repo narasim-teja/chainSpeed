@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -50,6 +50,11 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
   
   const [isGeneratingProof, setIsGeneratingProof] = useState(false);
   const [proofResult, setProofResult] = useState<any>(null);
+  const [pendingCheckpointsCount, setPendingCheckpointsCount] = useState(0);
+  const [isRetryingCheckpoints, setIsRetryingCheckpoints] = useState(false);
+  
+  // ScrollView ref for auto-scrolling to results
+  const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     loadProfileData();
@@ -69,6 +74,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
     const info = blockchainService.getNetworkInfo();
     
     setPendingCheckpoints(pending.length);
+    setPendingCheckpointsCount(pending.length);
     setNetworkInfo(info);
   };
 
@@ -192,10 +198,51 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
     }
   };
 
+  const retryPendingCheckpoints = async () => {
+    if (!authenticated) {
+      Alert.alert('Error', 'Please connect your wallet first');
+      return false;
+    }
+
+    setIsRetryingCheckpoints(true);
+    try {
+      const blockchainService = getBlockchainService();
+      const result = await blockchainService.retryPendingCheckpoints();
+      
+      if (result.submitted > 0) {
+        console.log(`Successfully submitted ${result.submitted} pending checkpoints`);
+        await loadProfileData(); // Refresh the data
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Failed to retry pending checkpoints:', error);
+      return false;
+    } finally {
+      setIsRetryingCheckpoints(false);
+    }
+  };
+
   const generateSpeedProof = async () => {
     try {
       setIsGeneratingProof(true);
       setProofResult(null);
+
+      // First, try to submit any pending checkpoints to improve verification rate
+      console.log('Checking pending checkpoints before proof generation...');
+      const blockchainServiceForPending = getBlockchainService();
+      const actualPendingCheckpoints = await blockchainServiceForPending.getPendingCheckpoints();
+      console.log('Actual pending checkpoints found:', actualPendingCheckpoints.length);
+      
+      if (actualPendingCheckpoints.length > 0) {
+        console.log(`Attempting to submit ${actualPendingCheckpoints.length} pending checkpoints before proof generation...`);
+        const retrySuccess = await retryPendingCheckpoints();
+        if (retrySuccess) {
+          console.log('Successfully submitted pending checkpoints, this will improve proof verification');
+        }
+      } else {
+        console.log('No pending checkpoints found in storage - checkpoints may have been created but never stored as pending');
+      }
 
       const startTime = startDate.getTime();
       const endTime = endDate.getTime();
@@ -317,6 +364,25 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
       setProofResult(proofSummary);
       console.log('Proof generated successfully:', proofSummary);
+      console.log('UI State after setting proofResult:', {
+        proofResultExists: !!proofSummary,
+        blockchainVerified: proofSummary.verification.blockchainVerified,
+        checkpointsFound: proofSummary.verification.checkpointsFound,
+        recordCount: proofSummary.statistics.recordCount
+      });
+      
+      // Show success alert
+      Alert.alert(
+        'Proof Generated! ✅', 
+        `Successfully generated blockchain-verified speed proof with ${proofSummary.verification.checkpointsVerified} verified checkpoints. Scroll down to view results.`,
+        [{ text: 'View Proof', onPress: () => {
+          setTimeout(() => {
+            if (scrollViewRef.current) {
+              scrollViewRef.current.scrollToEnd({ animated: true });
+            }
+          }, 100);
+        }}]
+      );
 
     } catch (error) {
       console.error('Failed to generate proof:', error);
@@ -330,7 +396,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView ref={scrollViewRef} contentContainerStyle={styles.scrollContent}>
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity 
@@ -415,8 +481,19 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Pending Checkpoints:</Text>
-            <Text style={styles.infoValue}>{pendingCheckpoints}</Text>
+            <Text style={[styles.infoValue, pendingCheckpointsCount > 0 ? styles.warning : styles.connected]}>
+              {pendingCheckpointsCount}
+            </Text>
           </View>
+          
+          {pendingCheckpointsCount > 0 && (
+            <View style={styles.warningContainer}>
+              <Ionicons name="warning" size={16} color="#FF9800" />
+              <Text style={styles.warningText}>
+                {pendingCheckpointsCount} checkpoints pending blockchain submission. This may reduce proof verification rate.
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Speed Proof Query */}
@@ -436,17 +513,91 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
             <Ionicons name="document-text-outline" size={20} color="white" />
             <Text style={styles.buttonText}>Generate Speed Proof</Text>
           </TouchableOpacity>
+
+          {/* Manual retry for missing checkpoints */}
+          <TouchableOpacity 
+            style={[styles.warningButton, { marginTop: 10 }]}
+            onPress={async () => {
+              Alert.alert(
+                'Retry Failed Submissions',
+                'This will attempt to submit any locally stored checkpoints that failed to reach the blockchain. This may improve your proof verification rate.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { 
+                    text: 'Retry All', 
+                    onPress: async () => {
+                      try {
+                        const blockchainService = getBlockchainService();
+                        const merkleService = getMerkleService();
+                        
+                        // Get all local checkpoints
+                        const allLocalCheckpoints = await merkleService.getCheckpoints();
+                        console.log(`Found ${allLocalCheckpoints.length} local checkpoints`);
+                        
+                        let retryCount = 0;
+                        let successCount = 0;
+                        
+                        for (const localCheckpoint of allLocalCheckpoints) {
+                          try {
+                            // Check if this checkpoint exists on blockchain
+                            const blockchainCheckpoint = await blockchainService.getCheckpointByRoot(localCheckpoint.merkleRoot);
+                            
+                            if (!blockchainCheckpoint) {
+                              // Checkpoint not found on blockchain, try to submit it
+                              console.log(`Retrying submission for checkpoint: ${localCheckpoint.merkleRoot.substring(0, 8)}...`);
+                              const txHash = await blockchainService.submitCheckpoint(localCheckpoint);
+                              
+                              if (txHash && !txHash.startsWith('pending-')) {
+                                successCount++;
+                                console.log(`Successfully submitted checkpoint: ${txHash.substring(0, 8)}...`);
+                              }
+                              retryCount++;
+                            }
+                          } catch (error) {
+                            console.error('Failed to retry checkpoint submission:', error);
+                          }
+                        }
+                        
+                        Alert.alert(
+                          'Retry Complete',
+                          `Attempted to retry ${retryCount} failed checkpoints. ${successCount} were successfully submitted to blockchain.`,
+                          [{ text: 'OK', onPress: () => loadProfileData() }]
+                        );
+                        
+                      } catch (error) {
+                        console.error('Failed to retry submissions:', error);
+                        Alert.alert('Error', 'Failed to retry submissions. Please try again.');
+                      }
+                    }
+                  }
+                ]
+              );
+            }}
+          >
+            <Ionicons name="refresh-outline" size={20} color="white" />
+            <Text style={styles.buttonText}>Retry Failed Submissions</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Actions */}
         <View style={styles.buttonContainer}>
 
 
-          {pendingCheckpoints > 0 && (
+          {pendingCheckpointsCount > 0 && (
             <>
-              <TouchableOpacity style={styles.actionButton} onPress={submitPendingCheckpoints}>
-                <Ionicons name="cloud-upload-outline" size={20} color="white" />
-                <Text style={styles.buttonText}>Submit Pending Checkpoints</Text>
+              <TouchableOpacity 
+                style={[styles.actionButton, isRetryingCheckpoints && styles.disabledButton]} 
+                onPress={submitPendingCheckpoints}
+                disabled={isRetryingCheckpoints}
+              >
+                {isRetryingCheckpoints ? (
+                  <ActivityIndicator color="white" size="small" />
+                ) : (
+                  <Ionicons name="cloud-upload-outline" size={20} color="white" />
+                )}
+                <Text style={styles.buttonText}>
+                  {isRetryingCheckpoints ? 'Submitting...' : `Submit ${pendingCheckpointsCount} Pending Checkpoints`}
+                </Text>
               </TouchableOpacity>
               
               <TouchableOpacity 
@@ -695,6 +846,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
             </TouchableOpacity>
 
             {/* Proof Results */}
+            {console.log('Rendering ProfileScreen, proofResult:', !!proofResult, proofResult ? 'has data' : 'no data')}
             {proofResult && (
               <View style={styles.proofResultsContainer}>
                 <Text style={styles.resultsTitle}>🛡️ Legal Speed Proof Generated</Text>
@@ -900,6 +1052,24 @@ const styles = StyleSheet.create({
   disconnected: {
     color: '#f44336',
   },
+  warning: {
+    color: '#FF9800',
+  },
+  warningContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FFF3E0',
+    padding: 10,
+    borderRadius: 6,
+    marginTop: 10,
+  },
+  warningText: {
+    fontSize: 12,
+    color: '#E65100',
+    marginLeft: 8,
+    flex: 1,
+    lineHeight: 16,
+  },
   addressContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1030,10 +1200,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#ccc',
   },
   proofResultsContainer: {
-    backgroundColor: 'white',
+    backgroundColor: '#f0fff4', // Light green background
     borderRadius: 10,
     padding: 20,
-    marginTop: 10,
+    marginTop: 20,
+    borderWidth: 2,
+    borderColor: '#4CAF50',
+    shadowColor: '#4CAF50',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 8,
   },
   resultsTitle: {
     fontSize: 20,
