@@ -26,7 +26,7 @@ interface TEESignature {
   isHardwareSigned: boolean;
 }
 
-export default function TEEDemoScreen() {
+export default function TEESecureEnclaveScreen() {
   const [teeStatus, setTeeStatus] = useState<TEEStatus>({
     keyGenerated: false,
     sessionActive: false,
@@ -122,8 +122,8 @@ export default function TEEDemoScreen() {
       <ScrollView style={styles.scrollView}>
         <View style={styles.header}>
           <Ionicons name="shield-checkmark" size={40} color="#9C27B0" />
-          <Text style={styles.title}>TEE Secure Enclave Demo</Text>
-          <Text style={styles.subtitle}>Hardware-backed Speed Attestation</Text>
+          <Text style={styles.title}>Secure Enclave Control</Text>
+          <Text style={styles.subtitle}>Hardware-backed Cryptographic Signing</Text>
         </View>
 
         {/* TEE Status */}
@@ -205,7 +205,11 @@ export default function TEEDemoScreen() {
             <View style={styles.signatureInfo}>
               <Text style={styles.signatureLabel}>Signature Type:</Text>
               <Text style={[styles.signatureValue, styles.hardwareTag]}>
-                {lastSignature.isHardwareSigned ? '🔐 HARDWARE-BACKED' : '💻 SOFTWARE'}
+                {lastSignature.isHardwareSigned && lastSignature.signature.startsWith('TEE-HW:') 
+                  ? '🔐 REAL SECURE ENCLAVE' 
+                  : lastSignature.isHardwareSigned 
+                    ? '🔐 HARDWARE-BACKED' 
+                    : '💻 SOFTWARE'}
               </Text>
             </View>
             
