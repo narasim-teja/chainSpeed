@@ -603,6 +603,66 @@ class BlockchainServiceClass {
   }
 
   /**
+   * Get device checkpoints within a time range
+   */
+  async getDeviceCheckpointsInRange(
+    deviceAddress: string,
+    startTime: number,
+    endTime: number
+  ): Promise<BlockchainCheckpoint[]> {
+    try {
+      if (!this.isConnected) {
+        await this.checkConnection();
+      }
+
+      // Convert timestamps to BigInt for blockchain
+      const startTimeBigInt = BigInt(Math.floor(startTime / 1000)); // Convert to seconds
+      const endTimeBigInt = BigInt(Math.floor(endTime / 1000));
+
+      console.log('Querying blockchain checkpoints:', {
+        device: deviceAddress,
+        startTime: new Date(startTime).toISOString(),
+        endTime: new Date(endTime).toISOString(),
+        startTimeBigInt: startTimeBigInt.toString(),
+        endTimeBigInt: endTimeBigInt.toString()
+      });
+
+      const checkpoints = await this.publicClient.readContract({
+        address: CONTRACT_CONFIG.address,
+        abi: SPEED_REGISTRY_ABI,
+        functionName: 'getDeviceCheckpointsInRange',
+        args: [deviceAddress as `0x${string}`, startTimeBigInt, endTimeBigInt],
+      });
+
+      // Convert blockchain response to our format
+      const result: BlockchainCheckpoint[] = [];
+      if (Array.isArray(checkpoints)) {
+        for (const cp of checkpoints) {
+          result.push({
+            merkleRoot: cp.merkleRoot,
+            startTime: Number(cp.startTime) * 1000, // Convert back to milliseconds
+            endTime: Number(cp.endTime) * 1000,
+            avgSpeed: Number(cp.avgSpeed),
+            maxSpeed: Number(cp.maxSpeed),
+            minSpeed: Number(cp.minSpeed),
+            distanceMeters: Number(cp.distanceMeters),
+            recordCount: Number(cp.recordCount),
+            deviceAddress: cp.deviceAddress,
+            deviceAttestation: cp.deviceAttestation
+          });
+        }
+      }
+
+      console.log(`Found ${result.length} blockchain checkpoints for device ${deviceAddress}`);
+      return result;
+
+    } catch (error) {
+      console.error('Failed to get device checkpoints in range:', error);
+      return [];
+    }
+  }
+
+  /**
    * Verify a Merkle proof against a stored checkpoint
    */
   async verifyMerkleProof(

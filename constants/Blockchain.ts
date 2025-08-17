@@ -126,6 +126,54 @@ export const SPEED_REGISTRY_ABI = [
     "type": "function"
   },
   {
+    "inputs": [
+      {"internalType": "address", "name": "device", "type": "address"},
+      {"internalType": "uint256", "name": "startTime", "type": "uint256"},
+      {"internalType": "uint256", "name": "endTime", "type": "uint256"}
+    ],
+    "name": "getDeviceCheckpointsInRange",
+    "outputs": [
+      {
+        "components": [
+          {"internalType": "bytes32", "name": "merkleRoot", "type": "bytes32"},
+          {"internalType": "uint256", "name": "startTime", "type": "uint256"},
+          {"internalType": "uint256", "name": "endTime", "type": "uint256"},
+          {"internalType": "uint8", "name": "avgSpeed", "type": "uint8"},
+          {"internalType": "uint8", "name": "maxSpeed", "type": "uint8"},
+          {"internalType": "uint8", "name": "minSpeed", "type": "uint8"},
+          {"internalType": "uint16", "name": "distanceMeters", "type": "uint16"},
+          {"internalType": "uint16", "name": "recordCount", "type": "uint16"},
+          {"internalType": "address", "name": "deviceAddress", "type": "address"},
+          {"internalType": "bytes32", "name": "deviceAttestation", "type": "bytes32"}
+        ],
+        "internalType": "struct SpeedRegistry.Checkpoint[]",
+        "name": "",
+        "type": "tuple[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "address", "name": "device", "type": "address"}],
+    "name": "getDeviceStats",
+    "outputs": [
+      {"internalType": "uint256", "name": "totalDistance", "type": "uint256"},
+      {"internalType": "uint256", "name": "totalTime", "type": "uint256"},
+      {"internalType": "uint8", "name": "maxRecordedSpeed", "type": "uint8"},
+      {"internalType": "uint256", "name": "checkpointCount", "type": "uint256"}
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "bytes32", "name": "merkleRoot", "type": "bytes32"}],
+    "name": "requestProofForLegal",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "anonymous": false,
     "inputs": [
       {"indexed": true, "internalType": "address", "name": "device", "type": "address"},

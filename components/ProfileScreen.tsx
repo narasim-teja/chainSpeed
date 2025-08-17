@@ -158,6 +158,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
       setIsLoadingData(true);
       
       const speedTrackingService = getSpeedTrackingService();
+      const blockchainService = getBlockchainService();
       
       // Get records from the last 30 days
       const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
@@ -165,7 +166,6 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
       
       if (records) {
         setAvailableRecords(records.records || []);
-        setAvailableCheckpoints(records.checkpoints || []);
         
         // Set default date range to cover available data
         if (records.records && records.records.length > 0) {
@@ -176,9 +176,26 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
         }
       }
       
+      // Get blockchain checkpoints for the device
+      const deviceAddress = getWalletAddress();
+      if (deviceAddress && deviceAddress !== 'No wallet connected') {
+        const blockchainCheckpoints = await blockchainService.getDeviceCheckpointsInRange(
+          deviceAddress,
+          thirtyDaysAgo,
+          Date.now()
+        );
+        
+        setAvailableCheckpoints(blockchainCheckpoints);
+        
+        console.log('Loaded blockchain checkpoints:', {
+          count: blockchainCheckpoints.length,
+          device: deviceAddress
+        });
+      }
+      
       console.log('Loaded available data:', {
         records: records?.records?.length || 0,
-        checkpoints: records?.checkpoints?.length || 0,
+        blockchainCheckpoints: availableCheckpoints.length,
         dateRange: records && records.records && records.records.length > 0 ? {
           from: new Date(records.records[0]!.timestamp).toISOString(),
           to: new Date(records.records[records.records.length - 1]!.timestamp).toISOString()
@@ -260,55 +277,67 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
       const speedTrackingService = getSpeedTrackingService();
       const blockchainService = getBlockchainService();
 
-      // 1. Get local records and checkpoints for the timeframe
+      // 1. Get local records for statistics
       const exportData = await speedTrackingService.exportDataForTimeRange(startTime, endTime);
       
-      if (!exportData || exportData.checkpoints.length === 0) {
+      if (!exportData || exportData.records.length === 0) {
         Alert.alert('No Data', 'No speed records found for the specified timeframe');
         return;
       }
 
-      // 2. Verify each checkpoint against blockchain
+      // 2. Get checkpoints directly from blockchain for the device and timeframe
+      const deviceAddress = getWalletAddress();
+      console.log('Fetching blockchain checkpoints for device:', deviceAddress);
+      
+      const blockchainCheckpoints = await blockchainService.getDeviceCheckpointsInRange(
+        deviceAddress,
+        startTime,
+        endTime
+      );
+
+      if (blockchainCheckpoints.length === 0) {
+        Alert.alert('No Blockchain Data', 'No checkpoints found on blockchain for this timeframe. Make sure you have submitted checkpoints to the blockchain.');
+        return;
+      }
+
+      // 3. Create verification results from blockchain checkpoints
       const verificationResults = [];
       
-      for (const checkpoint of exportData.checkpoints) {
+      for (const blockchainCheckpoint of blockchainCheckpoints) {
         try {
-          // Get blockchain checkpoint
-          const blockchainCheckpoint = await blockchainService.getCheckpointByRoot(checkpoint.merkleRoot);
+          // Generate proof document for each blockchain checkpoint
+          const proofDoc = await blockchainService.generateProofDocument(blockchainCheckpoint.merkleRoot);
           
-          if (blockchainCheckpoint) {
-            // Generate proof document
-            const proofDoc = await blockchainService.generateProofDocument(checkpoint.merkleRoot);
-            
-            verificationResults.push({
-              checkpoint,
-              blockchainCheckpoint,
-              proofDocument: proofDoc,
-              isValid: proofDoc.isValid,
-              timeRange: {
-                start: new Date(checkpoint.startTime),
-                end: new Date(checkpoint.endTime)
-              }
-            });
-          } else {
-            verificationResults.push({
-              checkpoint,
-              blockchainCheckpoint: null,
-              isValid: false,
-              error: 'Checkpoint not found on blockchain'
-            });
-          }
-        } catch (error) {
-          console.error('Error verifying checkpoint:', error);
           verificationResults.push({
-            checkpoint,
+            checkpoint: {
+              merkleRoot: blockchainCheckpoint.merkleRoot,
+              startTime: blockchainCheckpoint.startTime,
+              endTime: blockchainCheckpoint.endTime,
+              avgSpeed: blockchainCheckpoint.avgSpeed,
+              maxSpeed: blockchainCheckpoint.maxSpeed,
+              minSpeed: blockchainCheckpoint.minSpeed,
+              recordCount: blockchainCheckpoint.recordCount
+            },
+            blockchainCheckpoint,
+            proofDocument: proofDoc,
+            isValid: proofDoc.isValid,
+            timeRange: {
+              start: new Date(blockchainCheckpoint.startTime),
+              end: new Date(blockchainCheckpoint.endTime)
+            }
+          });
+        } catch (error) {
+          console.error('Error generating proof for checkpoint:', error);
+          verificationResults.push({
+            checkpoint: blockchainCheckpoint,
+            blockchainCheckpoint,
             isValid: false,
-            error: error instanceof Error ? error.message : 'Verification failed'
+            error: error instanceof Error ? error.message : 'Proof generation failed'
           });
         }
       }
 
-      // 3. Calculate aggregate statistics
+      // 4. Calculate aggregate statistics from local records
       const allRecords = exportData.records;
       const speeds = allRecords.map(r => r.speed);
       const avgSpeed = speeds.length > 0 ? speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length : 0;
@@ -368,7 +397,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
       // Show success alert
       Alert.alert(
         'Proof Generated! ✅', 
-        `Successfully generated blockchain-verified speed proof with ${proofSummary.verification.checkpointsVerified} verified checkpoints. Scroll down to view results.`,
+        `Successfully generated blockchain-verified speed proof with ${proofSummary.verification.checkpointsVerified} checkpoints directly from blockchain. Scroll down to view results.`,
         [{ text: 'View Proof', onPress: () => {
           setTimeout(() => {
             if (scrollViewRef.current) {
@@ -721,10 +750,10 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
               </View>
             )}
 
-            {/* Recent Checkpoints */}
+            {/* Recent Blockchain Checkpoints */}
             {availableCheckpoints.length > 0 && (
               <View style={styles.checkpointsSection}>
-                <Text style={styles.sectionTitle}>🔗 Recent Blockchain Checkpoints</Text>
+                <Text style={styles.sectionTitle}>🔗 Available Blockchain Checkpoints</Text>
                 <FlatList
                   data={availableCheckpoints.slice(0, 5)}
                   keyExtractor={(item, index) => index.toString()}
