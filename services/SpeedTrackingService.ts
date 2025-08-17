@@ -19,8 +19,17 @@ class SpeedTrackingServiceClass {
 
       console.log('Initializing SpeedTrackingService...');
 
-      // Initialize crypto service first
-      await this.cryptoService.getDeviceAttestation();
+      // Initialize TEE crypto service first
+      try {
+        const TEEModule = require('./TEECryptoService');
+        const teeService = TEEModule.getTEECryptoService();
+        await teeService.initialize();
+        console.log('✅ TEE Crypto Service initialized');
+      } catch (teeError) {
+        console.warn('⚠️ TEE initialization failed, using fallback:', teeError);
+        // Continue with software-based signing as fallback
+        await this.cryptoService.getDeviceAttestation();
+      }
 
       // Request permissions
       const hasPermissions = await this.locationService.requestPermissions();

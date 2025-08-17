@@ -25,6 +25,8 @@ interface TrackingStats {
   isTracking: boolean;
   blockchainConnected: boolean;
   pendingCheckpoints: number;
+  teeEnabled: boolean;
+  teeSessionActive: boolean;
 }
 
 interface TrackingScreenProps {
@@ -46,6 +48,8 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
     isTracking: false,
     blockchainConnected: false,
     pendingCheckpoints: 0,
+    teeEnabled: false,
+    teeSessionActive: false,
   });
 
   const [recentRecords, setRecentRecords] = useState<SpeedRecord[]>([]);
@@ -120,6 +124,19 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
       const isConnected = await blockchainService.checkConnection();
       const pendingCheckpoints = await blockchainService.getPendingCheckpoints();
 
+      // Get TEE status
+      let teeEnabled = false;
+      let teeSessionActive = false;
+      try {
+        const { getTEECryptoService } = await import('../services/TEECryptoService');
+        const teeService = getTEECryptoService();
+        const teeStatus = await teeService.getTEEStatus();
+        teeEnabled = teeStatus.keyGenerated && teeStatus.hardwareBacked;
+        teeSessionActive = teeStatus.sessionActive;
+      } catch {
+        // TEE not available, keep defaults
+      }
+
       setStats({
         currentSpeed: currentStats.currentSpeed,
         maxSpeed: currentStats.maxSpeed,
@@ -130,6 +147,8 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
         isTracking: trackingService.getTrackingStatus(),
         blockchainConnected: isConnected,
         pendingCheckpoints: pendingCheckpoints.length,
+        teeEnabled,
+        teeSessionActive,
       });
 
     } catch (error) {
@@ -165,6 +184,35 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
     } catch (error) {
       console.error('Failed to stop tracking:', error);
       Alert.alert('Error', 'Failed to stop tracking');
+    }
+  };
+
+  const authenticateTEE = async () => {
+    try {
+      const { getTEECryptoService } = await import('../services/TEECryptoService');
+      const teeService = getTEECryptoService();
+      
+      await teeService.authenticateSession();
+      Alert.alert('Success', 'TEE session authenticated! Speed tracking is now hardware-secured.');
+      await updateStats();
+    } catch (error) {
+      console.error('TEE authentication failed:', error);
+      Alert.alert('Authentication Failed', 'Could not authenticate with Secure Enclave. Please try again.');
+    }
+  };
+
+  const resetTEE = async () => {
+    try {
+      const { getTEECryptoService } = await import('../services/TEECryptoService');
+      const teeService = getTEECryptoService();
+      
+      await teeService.resetTEE();
+      await teeService.initialize();
+      Alert.alert('Success', 'TEE reset and reinitialized! Try authenticating again.');
+      await updateStats();
+    } catch (error) {
+      console.error('TEE reset failed:', error);
+      Alert.alert('Reset Failed', 'Could not reset TEE state: ' + (error instanceof Error ? error.message : String(error)));
     }
   };
 
@@ -234,6 +282,23 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
                                 Hedera Blockchain {stats.blockchainConnected ? 'Connected' : 'Disconnected'}
             </Text>
           </View>
+          
+          <View style={styles.statusRow}>
+            <View style={[styles.statusIndicator, stats.teeEnabled ? styles.connected : styles.disconnected]} />
+            <Text style={styles.statusText}>
+              🔐 TEE Secure Enclave {stats.teeEnabled ? 'Active' : 'Unavailable'}
+            </Text>
+          </View>
+          
+          {stats.teeEnabled && (
+            <View style={styles.statusRow}>
+              <View style={[styles.statusIndicator, stats.teeSessionActive ? styles.connected : styles.warning]} />
+              <Text style={styles.statusText}>
+                Session {stats.teeSessionActive ? 'Authenticated' : 'Requires Auth'}
+              </Text>
+            </View>
+          )}
+          
           {stats.pendingCheckpoints > 0 && (
             <Text style={styles.pendingText}>
               {stats.pendingCheckpoints} checkpoints pending blockchain submission
@@ -250,6 +315,20 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
           ) : (
             <TouchableOpacity style={styles.stopButton} onPress={stopTracking}>
               <Text style={styles.buttonText}>Stop Tracking</Text>
+            </TouchableOpacity>
+          )}
+          
+          {stats.teeEnabled && !stats.teeSessionActive && (
+            <TouchableOpacity style={styles.teeButton} onPress={authenticateTEE}>
+              <Ionicons name="finger-print" size={20} color="white" />
+              <Text style={styles.buttonText}>Authenticate TEE</Text>
+            </TouchableOpacity>
+          )}
+          
+          {!stats.teeEnabled && (
+            <TouchableOpacity style={styles.resetButton} onPress={resetTEE}>
+              <Ionicons name="refresh" size={20} color="white" />
+              <Text style={styles.buttonText}>Reset & Retry TEE</Text>
             </TouchableOpacity>
           )}
 
@@ -407,6 +486,34 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     elevation: 5,
   },
+  teeButton: {
+    backgroundColor: '#9C27B0',
+    padding: 15,
+    borderRadius: 25,
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  resetButton: {
+    backgroundColor: '#FF9800',
+    padding: 15,
+    borderRadius: 25,
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
+  },
   actionButton: {
     backgroundColor: '#2196F3',
     padding: 15,
@@ -520,6 +627,9 @@ const styles = StyleSheet.create({
   },
   disconnected: {
     backgroundColor: '#f44336',
+  },
+  warning: {
+    backgroundColor: '#FF9800',
   },
   statusText: {
     fontSize: 14,
