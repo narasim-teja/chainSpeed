@@ -22,7 +22,8 @@ interface TrackingStats {
   currentSpeed: number;
   maxSpeed: number;
   avgSpeed: number;
-  distance: number;
+  distance: number; // Session distance (local)
+  lifetimeDistance: number; // Lifetime distance (blockchain)
   recordCount: number;
   checkpointCount: number;
   isTracking: boolean;
@@ -51,6 +52,7 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
     maxSpeed: 0,
     avgSpeed: 0,
     distance: 0,
+    lifetimeDistance: 0,
     recordCount: 0,
     checkpointCount: 0,
     isTracking: false,
@@ -66,6 +68,12 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
   const [isTEEAuthenticating, setIsTEEAuthenticating] = useState(false);
   const [teeInitialized, setTeeInitialized] = useState(false);
   const [teeAuthenticated, setTeeAuthenticated] = useState(false);
+  
+  // Cache for blockchain data to avoid excessive API calls
+  const [blockchainDataCache, setBlockchainDataCache] = useState<{
+    lifetimeDistance: number;
+    lastFetch: number;
+  }>({ lifetimeDistance: 0, lastFetch: 0 });
 
   useEffect(() => {
     // Initial update
@@ -176,11 +184,38 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
         // Balance check not available, keep defaults
       }
 
+      // Get lifetime distance from blockchain (with caching to avoid rate limits)
+      let lifetimeDistance = blockchainDataCache.lifetimeDistance;
+      const now = Date.now();
+      const CACHE_DURATION = 30000; // Cache for 30 seconds
+      
+      try {
+        if (account?.address && isConnected && (now - blockchainDataCache.lastFetch > CACHE_DURATION)) {
+          console.log('🔄 Fetching fresh blockchain stats (cache expired)...');
+          const deviceStats = await blockchainService.getDeviceStats(account.address);
+          lifetimeDistance = deviceStats.totalDistance;
+          
+          // Update cache
+          setBlockchainDataCache({
+            lifetimeDistance,
+            lastFetch: now
+          });
+          
+          console.log('🚗 Lifetime distance from blockchain:', lifetimeDistance, 'miles');
+        } else if (blockchainDataCache.lastFetch > 0) {
+          console.log('📦 Using cached blockchain distance:', lifetimeDistance, 'miles');
+        }
+      } catch (error) {
+        console.log('Failed to get blockchain distance:', error);
+        // Keep cached/default lifetime distance
+      }
+
       setStats({
         currentSpeed: currentStats.currentSpeed,
         maxSpeed: currentStats.maxSpeed,
         avgSpeed: currentStats.avgSpeed,
         distance: currentStats.totalDistance,
+        lifetimeDistance: lifetimeDistance,
         recordCount: currentStats.recordCount,
         checkpointCount: currentStats.checkpointCount,
         isTracking: trackingService.getTrackingStatus(),
@@ -337,8 +372,12 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
             <Text style={styles.statBoxValue}>{stats.avgSpeed} mph</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statBoxLabel}>Distance</Text>
+            <Text style={styles.statBoxLabel}>Session</Text>
             <Text style={styles.statBoxValue}>{stats.distance} mi</Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={styles.statBoxLabel}>Lifetime</Text>
+            <Text style={[styles.statBoxValue, styles.blockchainData]}>{stats.lifetimeDistance.toFixed(1)} mi</Text>
           </View>
           <View style={styles.statBox}>
             <Text style={styles.statBoxLabel}>Checkpoints</Text>
@@ -546,6 +585,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: '#333',
+  },
+  blockchainData: {
+    color: '#4CAF50', // Green color to indicate blockchain data
   },
   buttonContainer: {
     marginBottom: 20,

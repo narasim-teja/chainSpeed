@@ -468,7 +468,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
           </TouchableOpacity>
 
           {/* Manual Delete Checkpoints */}
-          <TouchableOpacity 
+          {/* <TouchableOpacity 
             style={[styles.dangerButton, { marginTop: 10 }]}
             onPress={async () => {
               Alert.alert(
@@ -505,10 +505,10 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
           >
             <Ionicons name="trash-outline" size={20} color="white" />
             <Text style={styles.buttonText}>Clear All Checkpoints</Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
 
           {/* Manual retry for missing checkpoints */}
-          <TouchableOpacity 
+          {/* <TouchableOpacity 
             style={[styles.warningButton, { marginTop: 10 }]}
             onPress={async () => {
               Alert.alert(
@@ -597,7 +597,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
           >
             <Ionicons name="refresh-outline" size={20} color="white" />
             <Text style={styles.buttonText}>Retry 5 Checkpoints</Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
         </View>
 
         {/* Actions */}

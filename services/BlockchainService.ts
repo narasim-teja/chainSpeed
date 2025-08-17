@@ -1124,6 +1124,51 @@ class BlockchainServiceClass {
   }
 
   /**
+   * Get device statistics from blockchain
+   */
+  async getDeviceStats(deviceAddress: string): Promise<{
+    totalDistance: number; // in miles
+    totalTime: number; // in seconds
+    maxRecordedSpeed: number; // in mph
+    checkpointCount: number;
+  }> {
+    try {
+      if (!this.isConnected) {
+        await this.checkConnection();
+      }
+
+      console.log('Fetching device stats from blockchain for:', deviceAddress);
+
+      const stats = await this.publicClient.readContract({
+        address: CONTRACT_CONFIG.address,
+        abi: SPEED_REGISTRY_ABI,
+        functionName: 'getDeviceStats',
+        args: [deviceAddress as `0x${string}`],
+      });
+
+      // Convert blockchain response to our format
+      const result = {
+        totalDistance: Number(stats[0]) / 1609.34, // Convert meters to miles
+        totalTime: Number(stats[1]),
+        maxRecordedSpeed: Number(stats[2]),
+        checkpointCount: Number(stats[3])
+      };
+
+      console.log('Blockchain device stats:', result);
+      return result;
+
+    } catch (error) {
+      console.error('Failed to get device stats from blockchain:', error);
+      return {
+        totalDistance: 0,
+        totalTime: 0,
+        maxRecordedSpeed: 0,
+        checkpointCount: 0
+      };
+    }
+  }
+
+  /**
    * Get XP contract constants
    */
   async getXPConstants(): Promise<{
