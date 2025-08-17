@@ -7,7 +7,10 @@
     "compile": "hardhat compile",
     "clean": "hardhat clean",
     "deploy:flow-testnet": "hardhat run scripts/deploy.ts --network flowTestnet",
-    "verify:flow-testnet": "hardhat verify --network flowTestnet"
+    "deploy:flow-testnet-xp-rewards": "hardhat run scripts/deploy-xp-rewards.ts --network flowTestnet",
+    "verify:flow-testnet": "hardhat verify --network flowTestnet",
+    "deploy:hedera-testnet": "hardhat run scripts/deploy.ts --network hederaTestnet",
+    "deploy:hedera-testnet-xp-rewards": "hardhat run scripts/deploy-xp-rewards.ts --network hederaTestnet"
   },
   "keywords": [],
   "author": "",

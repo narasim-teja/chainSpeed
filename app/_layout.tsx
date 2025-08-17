@@ -43,6 +43,7 @@ export default function RootLayout() {
       <Stack>
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="profile" options={{ headerShown: false }} />
+        <Stack.Screen name="rewards" options={{ headerShown: false }} />
       </Stack>
       <PrivyElements />
     </PrivyProvider>

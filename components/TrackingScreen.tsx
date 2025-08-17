@@ -14,6 +14,7 @@ import { getSpeedTrackingService } from '../services/SpeedTrackingService';
 import { SpeedRecord } from '../services/LocationService';
 import { CheckpointData } from '../services/MerkleService';
 import { getBlockchainService } from '../services/BlockchainService';
+import { getXPService } from '../services/XPService';
 
 interface TrackingStats {
   currentSpeed: number;
@@ -27,6 +28,8 @@ interface TrackingStats {
   pendingCheckpoints: number;
   teeEnabled: boolean;
   teeSessionActive: boolean;
+  driveToEarnEnabled: boolean;
+  pendingXP: number;
 }
 
 interface TrackingScreenProps {
@@ -50,6 +53,8 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
     pendingCheckpoints: 0,
     teeEnabled: false,
     teeSessionActive: false,
+    driveToEarnEnabled: false,
+    pendingXP: 0,
   });
 
   const [recentRecords, setRecentRecords] = useState<SpeedRecord[]>([]);
@@ -74,6 +79,15 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
       create();
     }
   }, [user, account, create]);
+
+  // Set user address in XP service when available
+  useEffect(() => {
+    if (account?.address) {
+      const xpService = getXPService();
+      xpService.setUserAddress(account.address);
+      console.log('🎯 Set user address in XP service:', account.address);
+    }
+  }, [account?.address]);
 
   // Initialize wallet provider when user is authenticated
   useEffect(() => {
@@ -137,6 +151,17 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
         // TEE not available, keep defaults
       }
 
+      // Get XP service status
+      let driveToEarnEnabled = false;
+      let pendingXP = 0;
+      try {
+        const xpService = getXPService();
+        driveToEarnEnabled = xpService.isDriveToEarnEnabled();
+        pendingXP = xpService.getPendingXP();
+      } catch {
+        // XP service not available, keep defaults
+      }
+
       setStats({
         currentSpeed: currentStats.currentSpeed,
         maxSpeed: currentStats.maxSpeed,
@@ -149,6 +174,8 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
         pendingCheckpoints: pendingCheckpoints.length,
         teeEnabled,
         teeSessionActive,
+        driveToEarnEnabled,
+        pendingXP,
       });
 
     } catch (error) {
@@ -304,6 +331,17 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
               {stats.pendingCheckpoints} checkpoints pending blockchain submission
             </Text>
           )}
+          
+          {/* Drive-to-Earn Status */}
+          <View style={styles.statusRow}>
+            <View style={[styles.statusIndicator, stats.driveToEarnEnabled ? styles.connected : styles.disconnected]} />
+            <Text style={styles.statusText}>
+              🎯 Drive-to-Earn {stats.driveToEarnEnabled ? 'Enabled' : 'Disabled'}
+            </Text>
+            {stats.pendingXP > 0 && (
+              <Text style={styles.xpBadge}>+{stats.pendingXP} XP</Text>
+            )}
+          </View>
         </View>
 
         {/* Control Buttons */}
@@ -331,6 +369,17 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
               <Text style={styles.buttonText}>Reset & Retry TEE</Text>
             </TouchableOpacity>
           )}
+          
+          {/* Rewards Button */}
+          <TouchableOpacity style={styles.rewardsButton} onPress={() => navigation?.push('/rewards')}>
+            <Ionicons name="gift" size={20} color="white" />
+            <Text style={styles.buttonText}>Drive-to-Earn Rewards</Text>
+            {stats.pendingXP > 0 && (
+              <View style={styles.xpBadgeButton}>
+                <Text style={styles.xpBadgeText}>+{stats.pendingXP}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
 
         </View>
 
@@ -640,5 +689,46 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#FF9800',
     fontStyle: 'italic',
+  },
+  xpBadge: {
+    backgroundColor: '#4CAF50',
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 'bold',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginLeft: 8,
+  },
+  rewardsButton: {
+    backgroundColor: '#FF6B35',
+    padding: 15,
+    borderRadius: 25,
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 4,
+    position: 'relative',
+  },
+  xpBadgeButton: {
+    position: 'absolute',
+    top: -8,
+    right: 10,
+    backgroundColor: '#4CAF50',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    minWidth: 20,
+    alignItems: 'center',
+  },
+  xpBadgeText: {
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 'bold',
   },
 });

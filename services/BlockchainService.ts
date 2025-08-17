@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CheckpointData } from './MerkleService';
 import { getCryptoService } from './CryptoService';
 import * as Crypto from 'expo-crypto';
-import { FLOW_TESTNET_CONFIG, CONTRACT_CONFIG, SPEED_REGISTRY_ABI } from '../constants/Blockchain';
+import { FLOW_TESTNET_CONFIG, CONTRACT_CONFIG, SPEED_REGISTRY_ABI, XP_REWARDS_ABI } from '../constants/Blockchain';
 
 export interface BlockchainCheckpoint {
   merkleRoot: string;
@@ -84,11 +84,32 @@ class BlockchainServiceClass {
    */
   public async setWalletProvider(provider: any) {
     if (provider) {
-      this.walletClient = createWalletClient({
-        chain: hederaEvmTestnet,
-        transport: custom(provider),
-      });
-      console.log('Wallet client initialized with Privy provider and Hedera EVM chain');
+      // Get the account address from the provider
+      try {
+        const accounts = await provider.request({ method: 'eth_accounts' });
+        if (accounts && accounts.length > 0) {
+          const account = accounts[0];
+          
+          this.walletClient = createWalletClient({
+            account: account,
+            chain: hederaEvmTestnet,
+            transport: custom(provider),
+          });
+          
+          console.log('Wallet client initialized with account:', account);
+        } else {
+          throw new Error('No accounts found in provider');
+        }
+      } catch (error) {
+        console.error('Failed to get account from provider:', error);
+        
+        // Fallback: create wallet client without account (will fail on writes)
+        this.walletClient = createWalletClient({
+          chain: hederaEvmTestnet,
+          transport: custom(provider),
+        });
+        console.warn('Wallet client created without account - write operations may fail');
+      }
       
       // Try to switch to Hedera EVM testnet if not already on it
       await this.switchToHederaNetwork(provider);
@@ -669,6 +690,314 @@ class BlockchainServiceClass {
           verificationUrl: `${FLOW_TESTNET_CONFIG.blockExplorer}/address/${CONTRACT_CONFIG.address}`,
         }
       };
+    }
+  }
+
+  // ===== XP REWARDS CONTRACT METHODS =====
+
+  /**
+   * Toggle drive-to-earn feature for a user
+   */
+  async toggleDriveToEarn(enabled: boolean): Promise<boolean> {
+    try {
+      if (!this.walletClient) {
+        throw new Error('Wallet not connected');
+      }
+
+      console.log(`🎯 Toggling drive-to-earn: ${enabled}`);
+
+      // First, verify the contract exists by calling a read function
+      try {
+        const xpPerMile = await this.publicClient.readContract({
+          address: CONTRACT_CONFIG.xpRewardsAddress,
+          abi: XP_REWARDS_ABI,
+          functionName: 'XP_PER_SAFE_MILE',
+        });
+        console.log('✅ Contract verified, XP per mile:', xpPerMile);
+      } catch (contractError) {
+        console.error('❌ Contract verification failed:', contractError);
+        throw new Error(`XP Rewards contract not found at ${CONTRACT_CONFIG.xpRewardsAddress}`);
+      }
+
+      // Get account dynamically if not available
+      let account = this.walletClient.account;
+      if (!account) {
+        const accounts = await this.walletClient.getAddresses();
+        if (accounts && accounts.length > 0) {
+          account = accounts[0];
+        } else {
+          throw new Error('No account available for transaction');
+        }
+      }
+
+      const { request } = await this.publicClient.simulateContract({
+        address: CONTRACT_CONFIG.xpRewardsAddress,
+        abi: XP_REWARDS_ABI,
+        functionName: 'toggleDriveToEarn',
+        args: [enabled],
+        account: account,
+        gas: 100000n,
+      });
+
+      const hash = await this.walletClient.writeContract(request);
+      console.log('🎯 Drive-to-earn toggle transaction:', hash);
+
+      // Wait for confirmation
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+      console.log('✅ Drive-to-earn toggle confirmed:', receipt.status);
+
+      return receipt.status === 'success';
+
+    } catch (error) {
+      console.error('Failed to toggle drive-to-earn:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Process checkpoints for XP rewards
+   */
+  async processCheckpointsForXP(): Promise<boolean> {
+    try {
+      if (!this.walletClient) {
+        throw new Error('Wallet not connected');
+      }
+
+      console.log('🎯 Processing checkpoints for XP...');
+
+      // Get account dynamically if not available
+      let account = this.walletClient.account;
+      if (!account) {
+        const accounts = await this.walletClient.getAddresses();
+        if (accounts && accounts.length > 0) {
+          account = accounts[0];
+        } else {
+          throw new Error('No account available for transaction');
+        }
+      }
+
+      const { request } = await this.publicClient.simulateContract({
+        address: CONTRACT_CONFIG.xpRewardsAddress,
+        abi: XP_REWARDS_ABI,
+        functionName: 'processCheckpointsForXP',
+        account: account,
+      });
+
+      const hash = await this.walletClient.writeContract(request);
+      console.log('🎯 XP processing transaction:', hash);
+
+      // Wait for confirmation
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+      console.log('✅ XP processing confirmed:', receipt.status);
+
+      return receipt.status === 'success';
+
+    } catch (error) {
+      console.error('Failed to process XP:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Redeem XP for gift card
+   */
+  async redeemGiftCard(provider: string, value: number): Promise<boolean> {
+    try {
+      if (!this.walletClient) {
+        throw new Error('Wallet not connected');
+      }
+
+      console.log(`🎁 Redeeming gift card: ${provider} $${value}`);
+
+      // Get account dynamically if not available
+      let account = this.walletClient.account;
+      if (!account) {
+        const accounts = await this.walletClient.getAddresses();
+        if (accounts && accounts.length > 0) {
+          account = accounts[0];
+        } else {
+          throw new Error('No account available for transaction');
+        }
+      }
+
+      const { request } = await this.publicClient.simulateContract({
+        address: CONTRACT_CONFIG.xpRewardsAddress,
+        abi: XP_REWARDS_ABI,
+        functionName: 'redeemGiftCard',
+        args: [provider, value],
+        account: account,
+      });
+
+      const hash = await this.walletClient.writeContract(request);
+      console.log('🎁 Gift card redemption transaction:', hash);
+
+      // Wait for confirmation
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+      console.log('✅ Gift card redemption confirmed:', receipt.status);
+
+      return receipt.status === 'success';
+
+    } catch (error) {
+      console.error('Failed to redeem gift card:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get user's XP statistics
+   */
+  async getUserXP(userAddress: string): Promise<{
+    totalXP: number;
+    lifetimeMiles: number;
+    safeMiles: number;
+    currentStreak: number;
+    driveToEarnEnabled: boolean;
+  }> {
+    try {
+      const result = await this.publicClient.readContract({
+        address: CONTRACT_CONFIG.xpRewardsAddress,
+        abi: XP_REWARDS_ABI,
+        functionName: 'getUserXP',
+        args: [userAddress],
+      });
+
+      return {
+        totalXP: Number(result[0]),
+        lifetimeMiles: Number(result[1]),
+        safeMiles: Number(result[2]),
+        currentStreak: Number(result[3]),
+        driveToEarnEnabled: result[4],
+      };
+
+    } catch (error) {
+      console.error('Failed to get user XP:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get user's redeemed gift cards
+   */
+  async getUserGiftCards(userAddress: string): Promise<Array<{
+    provider: string;
+    value: number;
+    code: string;
+    redeemed: boolean;
+    redeemedAt: number;
+  }>> {
+    try {
+      const result = await this.publicClient.readContract({
+        address: CONTRACT_CONFIG.xpRewardsAddress,
+        abi: XP_REWARDS_ABI,
+        functionName: 'getUserGiftCards',
+        args: [userAddress],
+      });
+
+      return result.map((card: any) => ({
+        provider: card.provider,
+        value: Number(card.value),
+        code: card.code,
+        redeemed: card.redeemed,
+        redeemedAt: Number(card.redeemedAt),
+      }));
+
+    } catch (error) {
+      console.error('Failed to get user gift cards:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get available gift card options
+   */
+  async getGiftCardOptions(): Promise<{
+    providers: string[];
+    values: number[];
+    costs: number[];
+  }> {
+    try {
+      const result = await this.publicClient.readContract({
+        address: CONTRACT_CONFIG.xpRewardsAddress,
+        abi: XP_REWARDS_ABI,
+        functionName: 'getGiftCardOptions',
+      });
+
+      return {
+        providers: result[0],
+        values: result[1].map((v: any) => Number(v)),
+        costs: result[2].map((c: any) => Number(c)),
+      };
+
+    } catch (error) {
+      console.error('Failed to get gift card options:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get city statistics for data monetization
+   */
+  async getCityStats(city: string): Promise<{
+    safeMiles: number;
+    totalMiles: number;
+    safetyPercentage: number;
+  }> {
+    try {
+      const result = await this.publicClient.readContract({
+        address: CONTRACT_CONFIG.xpRewardsAddress,
+        abi: XP_REWARDS_ABI,
+        functionName: 'getCityStats',
+        args: [city],
+      });
+
+      return {
+        safeMiles: Number(result[0]),
+        totalMiles: Number(result[1]),
+        safetyPercentage: Number(result[2]),
+      };
+
+    } catch (error) {
+      console.error('Failed to get city stats:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get XP contract constants
+   */
+  async getXPConstants(): Promise<{
+    xpPerSafeMile: number;
+    dailyStreakBonus: number;
+    safeSpeedLimit: number;
+  }> {
+    try {
+      const [xpPerMile, streakBonus, speedLimit] = await Promise.all([
+        this.publicClient.readContract({
+          address: CONTRACT_CONFIG.xpRewardsAddress,
+          abi: XP_REWARDS_ABI,
+          functionName: 'XP_PER_SAFE_MILE',
+        }),
+        this.publicClient.readContract({
+          address: CONTRACT_CONFIG.xpRewardsAddress,
+          abi: XP_REWARDS_ABI,
+          functionName: 'DAILY_STREAK_BONUS',
+        }),
+        this.publicClient.readContract({
+          address: CONTRACT_CONFIG.xpRewardsAddress,
+          abi: XP_REWARDS_ABI,
+          functionName: 'SAFE_SPEED_LIMIT',
+        }),
+      ]);
+
+      return {
+        xpPerSafeMile: Number(xpPerMile),
+        dailyStreakBonus: Number(streakBonus),
+        safeSpeedLimit: Number(speedLimit),
+      };
+
+    } catch (error) {
+      console.error('Failed to get XP constants:', error);
+      throw error;
     }
   }
 }

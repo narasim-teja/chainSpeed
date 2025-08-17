@@ -63,13 +63,57 @@ class SpeedTrackingServiceClass {
         // For Merkle tree, we track all records including when stopped (complete legal coverage)
         // This ensures all time periods are recorded for legal protection
         if ((this.locationService as any).previousRecord) {
-          this.merkleService.addRecord((this.locationService as any).previousRecord);
+          const record = (this.locationService as any).previousRecord;
+          this.merkleService.addRecord(record);
+          
+          // Process for XP rewards and data aggregation
+          await this.processRecordForXP(record, location);
         }
 
       } catch (error) {
         console.error('Failed to process location update:', error);
       }
     };
+  }
+
+  private async processRecordForXP(record: any, location: Location.LocationObject): Promise<void> {
+    try {
+      // Initialize services if needed
+      const { getXPService } = await import('./XPService');
+      const { getDataAggregationService } = await import('./DataAggregationService');
+      
+      const xpService = getXPService();
+      const aggregationService = getDataAggregationService();
+      
+      // Initialize services if not already done
+      if (!xpService.isDriveToEarnEnabled()) {
+        await xpService.initialize();
+      }
+      
+      // Process XP rewards (only if drive-to-earn is enabled)
+      if (record.speed && record.distance) {
+        await xpService.processSpeedRecordForXP(
+          record.speed,
+          record.distance,
+          location.coords.latitude,
+          location.coords.longitude
+        );
+      }
+      
+      // Process data aggregation (always, for monetization)
+      if (record.speed && record.distance) {
+        await aggregationService.processSpeedRecord(
+          location.coords.latitude,
+          location.coords.longitude,
+          record.speed,
+          record.distance
+        );
+      }
+      
+    } catch (error) {
+      console.warn('Failed to process record for XP:', error);
+      // Don't throw - this shouldn't break main tracking
+    }
   }
 
   async startTracking(): Promise<boolean> {
