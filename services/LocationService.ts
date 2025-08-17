@@ -131,25 +131,41 @@ class LocationServiceClass {
   }
 
   private async generateSignature(record: Omit<SpeedRecord, 'signature'>): Promise<string> {
-    // Create software-based attestation signature
-    const dataString = JSON.stringify(record);
-    const previousHash = this.previousRecord ? 
-      await Crypto.digestStringAsync(
-        Crypto.CryptoDigestAlgorithm.SHA256,
-        JSON.stringify(this.previousRecord)
-      ) : '0';
-    
-    const signatureData = {
-      data: dataString,
-      deviceKey: this.deviceKey,
-      previousHash,
-      timestamp: Date.now()
-    };
+    try {
+      // Use TEE hardware signing instead of software signing
+      const TEEModule = require('./TEECryptoService');
+      const teeService = TEEModule.getTEECryptoService();
+      
+      const teeSignature = await teeService.signSpeedData(record);
+      
+      // Return the hardware signature with TEE marker
+      return teeSignature.signature;
+      
+    } catch (error) {
+      console.warn('TEE signing failed, falling back to software signing:', error);
+      
+      // Fallback to original software signing for compatibility
+      const dataString = JSON.stringify(record);
+      const previousHash = this.previousRecord ? 
+        await Crypto.digestStringAsync(
+          Crypto.CryptoDigestAlgorithm.SHA256,
+          JSON.stringify(this.previousRecord)
+        ) : '0';
+      
+      const signatureData = {
+        data: dataString,
+        deviceKey: this.deviceKey,
+        previousHash,
+        timestamp: Date.now()
+      };
 
-    return await Crypto.digestStringAsync(
-      Crypto.CryptoDigestAlgorithm.SHA256,
-      JSON.stringify(signatureData)
-    );
+      const softwareSignature = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        JSON.stringify(signatureData)
+      );
+      
+      return `SW:${softwareSignature}`; // Mark as software signature
+    }
   }
 
   private async validateRecord(record: SpeedRecord): Promise<boolean> {
