@@ -35,9 +35,80 @@ class BlockchainServiceClass {
   private publicClient: any;
   private walletClient: any = null;
   private isConnected = false;
+  private xpCache: Map<string, { data: any; timestamp: number; }> = new Map();
+  private readonly CACHE_DURATION = 30000; // 30 seconds cache
 
   constructor() {
     this.initializeClients();
+  }
+
+  /**
+   * Utility function to execute a blockchain read operation with retry logic and exponential backoff
+   */
+  private async executeWithRetry<T>(
+    operation: () => Promise<T>,
+    maxRetries: number = 3,
+    baseDelay: number = 1000
+  ): Promise<T> {
+    let lastError: any;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error: any) {
+        lastError = error;
+        
+        // Check if it's a rate limit error (429 status)
+        const isRateLimit = error.message?.includes('429') || 
+                           error.message?.includes('Rate limit') || 
+                           error.details?.message?.includes('Rate limit');
+        
+        if (!isRateLimit || attempt === maxRetries) {
+          throw error;
+        }
+        
+        // Exponential backoff with jitter
+        const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
+        console.log(`⏳ Rate limited, retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${maxRetries + 1})`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    throw lastError;
+  }
+
+  /**
+   * Check if cached data is still valid
+   */
+  private isCacheValid(cacheKey: string): boolean {
+    const cached = this.xpCache.get(cacheKey);
+    if (!cached) return false;
+    
+    const now = Date.now();
+    return (now - cached.timestamp) < this.CACHE_DURATION;
+  }
+
+  /**
+   * Get data from cache or execute operation and cache result
+   */
+  private async getCachedOrFetch<T>(cacheKey: string, operation: () => Promise<T>): Promise<T> {
+    // Check cache first
+    if (this.isCacheValid(cacheKey)) {
+      console.log(`📦 Using cached data for ${cacheKey}`);
+      return this.xpCache.get(cacheKey)!.data;
+    }
+
+    // Execute operation with retry logic
+    const result = await this.executeWithRetry(operation);
+    
+    // Cache the result
+    this.xpCache.set(cacheKey, {
+      data: result,
+      timestamp: Date.now()
+    });
+    
+    return result;
   }
 
   /**
@@ -1014,7 +1085,9 @@ class BlockchainServiceClass {
     currentStreak: number;
     driveToEarnEnabled: boolean;
   }> {
-    try {
+    const cacheKey = `getUserXP_${userAddress}`;
+    
+    return await this.getCachedOrFetch(cacheKey, async () => {
       const result = await this.publicClient.readContract({
         address: CONTRACT_CONFIG.xpRewardsAddress,
         abi: XP_REWARDS_ABI,
@@ -1029,11 +1102,7 @@ class BlockchainServiceClass {
         currentStreak: Number(result[3]),
         driveToEarnEnabled: result[4],
       };
-
-    } catch (error) {
-      console.error('Failed to get user XP:', error);
-      throw error;
-    }
+    });
   }
 
   /**
@@ -1132,6 +1201,8 @@ class BlockchainServiceClass {
     maxRecordedSpeed: number; // in mph
     checkpointCount: number;
   }> {
+    const cacheKey = `getDeviceStats_${deviceAddress}`;
+    
     try {
       if (!this.isConnected) {
         await this.checkConnection();
@@ -1139,26 +1210,28 @@ class BlockchainServiceClass {
 
       console.log('Fetching device stats from blockchain for:', deviceAddress);
 
-      const stats = await this.publicClient.readContract({
-        address: CONTRACT_CONFIG.address,
-        abi: SPEED_REGISTRY_ABI,
-        functionName: 'getDeviceStats',
-        args: [deviceAddress as `0x${string}`],
+      return await this.getCachedOrFetch(cacheKey, async () => {
+        const stats = await this.publicClient.readContract({
+          address: CONTRACT_CONFIG.address,
+          abi: SPEED_REGISTRY_ABI,
+          functionName: 'getDeviceStats',
+          args: [deviceAddress as `0x${string}`],
+        });
+
+        // Convert blockchain response to our format
+        const result = {
+          totalDistance: Number(stats[0]) / 1609.34, // Convert meters to miles
+          totalTime: Number(stats[1]),
+          maxRecordedSpeed: Number(stats[2]),
+          checkpointCount: Number(stats[3])
+        };
+
+        console.log('Blockchain device stats:', result);
+        return result;
       });
 
-      // Convert blockchain response to our format
-      const result = {
-        totalDistance: Number(stats[0]) / 1609.34, // Convert meters to miles
-        totalTime: Number(stats[1]),
-        maxRecordedSpeed: Number(stats[2]),
-        checkpointCount: Number(stats[3])
-      };
-
-      console.log('Blockchain device stats:', result);
-      return result;
-
     } catch (error) {
-      console.error('Failed to get device stats from blockchain:', error);
+      // console.error('Failed to get device stats from blockchain:', error);
       return {
         totalDistance: 0,
         totalTime: 0,

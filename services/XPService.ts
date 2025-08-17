@@ -32,6 +32,8 @@ class XPService {
   private pendingXP: number = 0;
   private lastProcessedCheckpoint: number = 0;
   private userAddress: string | null = null;
+  private lastXPFetch: number = 0;
+  private readonly XP_FETCH_COOLDOWN = 10000; // 10 seconds cooldown between XP fetches
 
   /**
    * Initialize XP service
@@ -89,6 +91,13 @@ class XPService {
         return false;
       }
 
+      // Rate limiting: avoid frequent blockchain calls
+      const now = Date.now();
+      if (now - this.lastXPFetch < this.XP_FETCH_COOLDOWN) {
+        console.log('📦 Using cached drive-to-earn status (rate limited)');
+        return this.driveToEarnEnabled;
+      }
+
       // Check blockchain state
       const blockchainService = getBlockchainService();
       const isConnected = await blockchainService.checkConnection();
@@ -102,14 +111,15 @@ class XPService {
       const userXPData = await blockchainService.getUserXP(this.userAddress);
       const isEnabled = userXPData.driveToEarnEnabled;
       
-      // Update local state
+      // Update local state and cache timestamp
       this.driveToEarnEnabled = isEnabled;
+      this.lastXPFetch = now;
       
       console.log(`🎯 Drive-to-earn status: ${isEnabled ? 'ENABLED' : 'DISABLED'}`);
       return isEnabled;
       
     } catch (error) {
-      console.error('❌ Failed to check drive-to-earn status:', error);
+      console.warn('⚠️ Failed to check drive-to-earn status (using cached):', error instanceof Error ? error.message : error);
       // Fallback to local state
       return this.driveToEarnEnabled;
     }
@@ -199,7 +209,22 @@ class XPService {
         // Get user's wallet address
         const userAddress = await this.getUserAddress();
         if (userAddress) {
+          // Rate limiting: avoid frequent blockchain calls
+          const now = Date.now();
+          if (now - this.lastXPFetch < this.XP_FETCH_COOLDOWN) {
+            console.log('📦 Using local XP stats (rate limited)');
+            return {
+              totalXP: this.pendingXP,
+              lifetimeMiles: 0,
+              safeMiles: 0,
+              currentStreak: 0,
+              driveToEarnEnabled: this.driveToEarnEnabled
+            };
+          }
+
           const stats = await blockchainService.getUserXP(userAddress);
+          this.lastXPFetch = now;
+          
           return {
             totalXP: stats.totalXP + this.pendingXP, // Include pending XP
             lifetimeMiles: stats.lifetimeMiles,
@@ -220,7 +245,7 @@ class XPService {
       };
       
     } catch (error) {
-      console.error('Failed to get user XP stats:', error);
+      console.warn('⚠️ Failed to get user XP stats (using cached):', error instanceof Error ? error.message : error);
       return {
         totalXP: this.pendingXP,
         lifetimeMiles: 0,
