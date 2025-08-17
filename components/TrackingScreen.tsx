@@ -231,7 +231,7 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
           <View style={styles.statusRow}>
             <View style={[styles.statusIndicator, stats.blockchainConnected ? styles.connected : styles.disconnected]} />
             <Text style={styles.statusText}>
-              Flow Blockchain {stats.blockchainConnected ? 'Connected' : 'Disconnected'}
+                                Hedera Blockchain {stats.blockchainConnected ? 'Connected' : 'Disconnected'}
             </Text>
           </View>
           {stats.pendingCheckpoints > 0 && (

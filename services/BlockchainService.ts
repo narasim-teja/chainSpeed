@@ -18,16 +18,16 @@ export interface BlockchainCheckpoint {
   deviceAttestation: string;
 }
 
-// Define Flow EVM Testnet chain for viem
-const flowEvmTestnet = defineChain({
-  id: FLOW_TESTNET_CONFIG.id,
+// Define Hedera EVM Testnet chain for viem
+const hederaEvmTestnet = defineChain({
+  id: FLOW_TESTNET_CONFIG.id, // Using FLOW_TESTNET_CONFIG for backwards compatibility
   name: FLOW_TESTNET_CONFIG.name,
   nativeCurrency: FLOW_TESTNET_CONFIG.nativeCurrency,
   rpcUrls: {
     default: { http: [FLOW_TESTNET_CONFIG.rpcUrl] },
   },
   blockExplorers: {
-    default: { name: 'Flow EVM Testnet Explorer', url: FLOW_TESTNET_CONFIG.blockExplorer },
+    default: { name: 'Hedera Testnet Explorer', url: FLOW_TESTNET_CONFIG.blockExplorer },
   },
 });
 
@@ -74,7 +74,7 @@ class BlockchainServiceClass {
   private initializeClients() {
     // Initialize public client for reading data
     this.publicClient = createPublicClient({
-      chain: flowEvmTestnet,
+      chain: hederaEvmTestnet,
       transport: http(FLOW_TESTNET_CONFIG.rpcUrl),
     });
   }
@@ -85,20 +85,20 @@ class BlockchainServiceClass {
   public async setWalletProvider(provider: any) {
     if (provider) {
       this.walletClient = createWalletClient({
-        chain: flowEvmTestnet,
+        chain: hederaEvmTestnet,
         transport: custom(provider),
       });
-      console.log('Wallet client initialized with Privy provider and Flow EVM chain');
+      console.log('Wallet client initialized with Privy provider and Hedera EVM chain');
       
-      // Try to switch to Flow EVM testnet if not already on it
-      await this.switchToFlowNetwork(provider);
+      // Try to switch to Hedera EVM testnet if not already on it
+      await this.switchToHederaNetwork(provider);
     }
   }
 
   /**
-   * Switch wallet to Flow EVM testnet using Privy's method
+   * Switch wallet to Hedera EVM testnet using Privy's method
    */
-  private async switchToFlowNetwork(provider: any): Promise<boolean> {
+  private async switchToHederaNetwork(provider: any): Promise<boolean> {
     try {
       // Check current chain
       const currentChainId = await provider.request({ method: 'eth_chainId' });
@@ -107,11 +107,11 @@ class BlockchainServiceClass {
       console.log('Current wallet chain ID:', currentChainIdDecimal);
       
       if (currentChainIdDecimal === FLOW_TESTNET_CONFIG.id) {
-        console.log('Wallet already on Flow EVM testnet');
+        console.log('Wallet already on Hedera EVM testnet');
         return true;
       }
       
-      console.log('Switching wallet to Flow EVM testnet using provider method...');
+      console.log('Switching wallet to Hedera EVM testnet using provider method...');
       
       // Use Privy's official method for React Native
       await provider.request({
@@ -119,15 +119,15 @@ class BlockchainServiceClass {
         params: [{ chainId: `0x${FLOW_TESTNET_CONFIG.id.toString(16)}` }], // 0x221 for chain ID 545
       });
       
-      console.log('Successfully switched to Flow EVM testnet');
+      console.log('Successfully switched to Hedera EVM testnet');
       return true;
       
     } catch (error: any) {
-      console.error('Error switching to Flow network:', error);
+              console.error('Error switching to Hedera network:', error);
       
       // If the chain doesn't exist, try to add it first
       if (error.code === 4902 || error.message?.includes('Unsupported chainId')) {
-        console.log('Flow EVM testnet not recognized, attempting to add it...');
+        console.log('Hedera EVM testnet not recognized, attempting to add it...');
         
         try {
           await provider.request({
@@ -141,7 +141,7 @@ class BlockchainServiceClass {
             }]
           });
           
-          console.log('Flow EVM testnet added successfully, now switching...');
+          console.log('Hedera EVM testnet added successfully, now switching...');
           
           // Try switching again after adding
           await provider.request({
@@ -149,12 +149,12 @@ class BlockchainServiceClass {
             params: [{ chainId: `0x${FLOW_TESTNET_CONFIG.id.toString(16)}` }],
           });
           
-          console.log('Successfully switched to Flow EVM testnet after adding');
+          console.log('Successfully switched to Hedera EVM testnet after adding');
           return true;
           
         } catch (addError) {
-          console.error('Failed to add Flow EVM testnet:', addError);
-          console.log('Please ensure Flow EVM testnet is configured in your Privy supportedChains.');
+          console.error('Failed to add Hedera EVM testnet:', addError);
+          console.log('Please ensure Hedera EVM testnet is configured in your Privy supportedChains.');
         }
       }
       
@@ -178,7 +178,7 @@ class BlockchainServiceClass {
         // Fallback to provider method if available
         if (wallet && wallet.getProvider) {
           const provider = await wallet.getProvider();
-          return await this.switchToFlowNetwork(provider);
+          return await this.switchToHederaNetwork(provider);
         }
         
         console.log('No switching method available');
@@ -192,7 +192,7 @@ class BlockchainServiceClass {
         console.log('Trying fallback provider method after wallet.switchChain failed...');
         try {
           const provider = await wallet.getProvider();
-          return await this.switchToFlowNetwork(provider);
+          return await this.switchToHederaNetwork(provider);
         } catch (providerError) {
           console.error('Provider method also failed:', providerError);
         }
@@ -206,10 +206,10 @@ class BlockchainServiceClass {
     try {
       const blockNumber = await this.publicClient.getBlockNumber();
       this.isConnected = true;
-      console.log('Connected to Flow EVM Testnet, block:', blockNumber);
+      console.log('Connected to Hedera EVM Testnet, block:', blockNumber);
       return true;
     } catch (error) {
-      console.error('Failed to connect to Flow EVM:', error);
+      console.error('Failed to connect to Hedera EVM:', error);
       this.isConnected = false;
       return false;
     }

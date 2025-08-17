@@ -1,19 +1,22 @@
-// Flow EVM Testnet configuration
-export const FLOW_TESTNET_CONFIG = {
-  id: 545,
-  name: 'Flow EVM Testnet',
-  rpcUrl: 'https://testnet.evm.nodes.onflow.org',
-  blockExplorer: 'https://evm-testnet.flowscan.io',
+// Hedera EVM Testnet configuration
+export const HEDERA_TESTNET_CONFIG = {
+  id: 296,
+  name: 'Hedera Testnet',
+  rpcUrl: 'https://testnet.hashio.io/api',
+  blockExplorer: 'https://hashscan.io/testnet',
   nativeCurrency: {
-    name: 'Flow',
-    symbol: 'FLOW',
+    name: 'HBAR',
+    symbol: 'HBAR',
     decimals: 18,
   },
 };
 
-// Smart contract configuration
+// Legacy export for backwards compatibility
+export const FLOW_TESTNET_CONFIG = HEDERA_TESTNET_CONFIG;
+
+// Smart contract configuration  
 export const CONTRACT_CONFIG = {
-  address: '0x7aE65f5275FfDE8FB756d8E33dd8b9312B91a33A' as const,
+  address: '0xBB8647F3eCa9fb1f2eb049B07697Ad02f8720ac8' as const, // Hedera EVM Testnet
 };
 
 // Contract ABI for SpeedRegistry

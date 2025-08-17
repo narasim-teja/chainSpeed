@@ -2,7 +2,7 @@ import hre from "hardhat";
 import "@nomicfoundation/hardhat-ethers";
 
 async function main() {
-  console.log("Deploying SpeedRegistry contract to Flow testnet...");
+  console.log("Deploying SpeedRegistry contract to Hedera EVM Testnet...");
   
   // Get the deployer account
   const [deployer] = await hre.ethers.getSigners();
@@ -10,7 +10,7 @@ async function main() {
   
   // Get account balance
   const balance = await hre.ethers.provider.getBalance(deployer.address);
-  console.log(`Account balance: ${hre.ethers.formatEther(balance)} FLOW`);
+  console.log(`Account balance: ${hre.ethers.formatEther(balance)} HBAR`);
   
   // Get the contract factory
   const SpeedRegistry = await hre.ethers.getContractFactory("SpeedRegistry", deployer);
@@ -42,7 +42,7 @@ main()
   .then((result) => {
     console.log("\n✅ Deployment successful!");
     console.log(`Contract address: ${result.address}`);
-    console.log(`Flow testnet explorer: https://evm-testnet.flowscan.io/address/${result.address}`);
+    console.log(`Hedera testnet explorer: https://hashscan.io/testnet/contract/${result.address}`);
     process.exit(0);
   })
   .catch((error) => {

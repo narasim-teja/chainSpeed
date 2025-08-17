@@ -13,16 +13,22 @@ const config: HardhatUserConfig & { etherscan?: any } = {
     },
   },
   networks: {
-    // Flow EVM Testnet
-    flowTestnet: {
-      url: "https://testnet.evm.nodes.onflow.org",
-      chainId: 545,
+    // Hedera EVM Testnet
+    hederaTestnet: {
+      url: "https://testnet.hashio.io/api",
+      chainId: 296,
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY.startsWith('0x') ? process.env.PRIVATE_KEY : '0x' + process.env.PRIVATE_KEY] : [],
     },
-    // Flow EVM Mainnet (for future production)
-    flowMainnet: {
-      url: "https://mainnet.evm.nodes.onflow.org", 
-      chainId: 747,
+    // Hedera EVM Mainnet (for future production)
+    hederaMainnet: {
+      url: "https://mainnet.hashio.io/api", 
+      chainId: 295,
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY.startsWith('0x') ? process.env.PRIVATE_KEY : '0x' + process.env.PRIVATE_KEY] : [],
+    },
+    // Legacy Flow networks (for backwards compatibility)
+    flowTestnet: {
+      url: "https://testnet.hashio.io/api",
+      chainId: 296,
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY.startsWith('0x') ? process.env.PRIVATE_KEY : '0x' + process.env.PRIVATE_KEY] : [],
     },
     // Local development
@@ -31,26 +37,35 @@ const config: HardhatUserConfig & { etherscan?: any } = {
     },
   },
   etherscan: {
-    // Flow EVM block explorer
+    // Hedera block explorer
     apiKey: {
-      flowTestnet: "no-api-key-needed",
-      flowMainnet: "no-api-key-needed",
+      hederaTestnet: "no-api-key-needed",
+      hederaMainnet: "no-api-key-needed",
+      flowTestnet: "no-api-key-needed", // Legacy compatibility
     },
     customChains: [
       {
-        network: "flowTestnet",
-        chainId: 545,
+        network: "hederaTestnet",
+        chainId: 296,
         urls: {
-          apiURL: "https://evm-testnet.flowscan.io/api",
-          browserURL: "https://evm-testnet.flowscan.io"
+          apiURL: "https://hashscan.io/testnet/api",
+          browserURL: "https://hashscan.io/testnet"
         }
       },
       {
-        network: "flowMainnet", 
-        chainId: 747,
+        network: "hederaMainnet", 
+        chainId: 295,
         urls: {
-          apiURL: "https://evm.flowscan.io/api",
-          browserURL: "https://evm.flowscan.io"
+          apiURL: "https://hashscan.io/mainnet/api",
+          browserURL: "https://hashscan.io/mainnet"
+        }
+      },
+      {
+        network: "flowTestnet", // Legacy compatibility
+        chainId: 296,
+        urls: {
+          apiURL: "https://hashscan.io/testnet/api",
+          browserURL: "https://hashscan.io/testnet"
         }
       }
     ]

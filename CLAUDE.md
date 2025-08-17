@@ -80,7 +80,7 @@ yarn lint             # Run ESLint
 - ✅ Software-based signing and attestation system
 - ✅ Merkle tree construction for 30-second checkpoints
 - ✅ TrackingScreen UI for speed monitoring
-- 🔄 Flow blockchain integration (pending)
+- 🔄 Hedera blockchain integration (complete)
 - 🔄 Legal document generation (pending)
 
 **Core Services:**

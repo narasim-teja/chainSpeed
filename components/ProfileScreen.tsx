@@ -110,7 +110,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
               } else if (result.failed > 0) {
                 Alert.alert('Failed', `All ${result.failed} checkpoint submissions failed. Check your wallet balance.`);
               } else {
-                Alert.alert('Info', 'No checkpoints were submitted. Make sure your wallet has testnet FLOW.');
+                Alert.alert('Info', 'No checkpoints were submitted. Make sure your wallet has testnet HBAR.');
               }
             } catch (error) {
               console.error('Failed to submit checkpoints:', error);
@@ -354,7 +354,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
           checkpointsVerified: verificationResults.filter(r => r.isValid).length,
           blockchainVerified: verificationResults.every(r => r.isValid),
           contractAddress: CONTRACT_CONFIG.address,
-          network: 'Flow EVM Testnet'
+          network: 'Hedera EVM Testnet'
         },
         checkpoints: verificationResults,
         deviceAttestation: exportData.attestation,
@@ -446,12 +446,12 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
           
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Network:</Text>
-            <Text style={styles.infoValue}>{networkInfo?.network || 'Flow EVM Testnet'}</Text>
+            <Text style={styles.infoValue}>{networkInfo?.network || 'Hedera Testnet'}</Text>
           </View>
 
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Chain ID:</Text>
-            <Text style={styles.infoValue}>{networkInfo?.chainId || '545'}</Text>
+            <Text style={styles.infoValue}>{networkInfo?.chainId || '296'}</Text>
           </View>
 
           <View style={styles.infoRow}>
@@ -911,7 +911,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                 <View style={styles.legalNotice}>
                   <Ionicons name="information-circle" size={20} color="#FF9800" />
                   <Text style={styles.legalText}>
-                    This proof is cryptographically verified on the Flow blockchain and can be used as evidence in legal proceedings.
+                    This proof is cryptographically verified on the Hedera blockchain and can be used as evidence in legal proceedings.
           </Text>
         </View>
 

@@ -33,7 +33,7 @@ export default function RootLayout() {
           },
           blockExplorers: {
             default: {
-              name: 'Flow EVM Testnet Explorer',
+              name: 'Hedera Testnet Explorer',
               url: FLOW_TESTNET_CONFIG.blockExplorer,
             },
           },

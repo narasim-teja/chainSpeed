@@ -5,7 +5,7 @@
 ### 1. Authentication & Wallet System
 - **Current**: Privy embedded wallets ✅ 
 - **Adaptation**: Use Privy's gasless transaction capabilities
-- **Flow Integration**: Privy supports Flow blockchain via custom RPC
+- **Hedera Integration**: Privy supports Hedera blockchain via custom RPC
 
 ### 2. Security Model (MVP Approach)
 - **Software-based signing** with app-level attestation
@@ -14,7 +14,7 @@
 - **Future**: Upgrade to TEE when time permits
 
 ### 3. Blockchain Target
-- **Flow Blockchain** (EVM-compatible L2)
+- **Hedera Blockchain** (EVM-compatible network)
 - **Gas sponsorship** via Privy's embedded wallet infrastructure
 - **Low fees** suitable for frequent checkpoints
 
@@ -22,7 +22,7 @@
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   React Native  │───▶│  Privy Wallet    │───▶│  Flow Blockchain│
+│   React Native  │───▶│  Privy Wallet    │───▶│ Hedera Blockchain│
 │   GPS Tracking  │    │  Gasless Txns    │    │  Smart Contract │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
          │                        │                        │
@@ -75,7 +75,7 @@
    - Local storage of full tree
 
 ### Phase 3: Blockchain Integration (Hours 13-18)
-1. **Flow Smart Contract**
+1. **Hedera Smart Contract**
    ```solidity
    contract SpeedRegistry {
      struct Checkpoint {
@@ -94,8 +94,8 @@
    }
    ```
 
-2. **Privy Flow Integration**
-   - Custom RPC configuration for Flow
+2. **Privy Hedera Integration**
+- Custom RPC configuration for Hedera
    - Gasless transaction setup
    - Automatic checkpoint submission
 
@@ -118,7 +118,7 @@
 - [ ] GPS tracking with 1s precision
 - [ ] Software signing of speed records
 - [ ] 30-second Merkle checkpoints
-- [ ] Flow blockchain storage
+- [x] Hedera blockchain storage
 - [ ] Basic proof generation
 
 ### Should-Have (If Time)
@@ -139,7 +139,7 @@
    - `services/LocationService.ts` - GPS tracking
    - `services/CryptoService.ts` - Signing and verification
    - `services/MerkleService.ts` - Tree construction
-   - `services/BlockchainService.ts` - Flow integration
+   - `services/BlockchainService.ts` - Hedera integration
 
 2. **Components**
    - `components/TrackingScreen.tsx` - Main driving interface
