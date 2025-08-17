@@ -80,6 +80,42 @@ class XPService {
   }
 
   /**
+   * Check if drive-to-earn is enabled for the current user
+   */
+  public async isDriveToEarnEnabled(): Promise<boolean> {
+    try {
+      if (!this.userAddress) {
+        console.log('🚫 No user address available for drive-to-earn check');
+        return false;
+      }
+
+      // Check blockchain state
+      const blockchainService = getBlockchainService();
+      const isConnected = await blockchainService.checkConnection();
+      
+      if (!isConnected) {
+        console.log('🚫 Blockchain not connected, using local state');
+        return this.driveToEarnEnabled;
+      }
+
+      // Get the actual state from the smart contract
+      const userXPData = await blockchainService.getUserXP(this.userAddress);
+      const isEnabled = userXPData.driveToEarnEnabled;
+      
+      // Update local state
+      this.driveToEarnEnabled = isEnabled;
+      
+      console.log(`🎯 Drive-to-earn status: ${isEnabled ? 'ENABLED' : 'DISABLED'}`);
+      return isEnabled;
+      
+    } catch (error) {
+      console.error('❌ Failed to check drive-to-earn status:', error);
+      // Fallback to local state
+      return this.driveToEarnEnabled;
+    }
+  }
+
+  /**
    * Process speed records for XP calculation
    */
   public async processSpeedRecordForXP(

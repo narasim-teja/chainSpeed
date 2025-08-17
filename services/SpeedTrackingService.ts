@@ -21,7 +21,7 @@ class SpeedTrackingServiceClass {
 
       // Initialize TEE crypto service first
       try {
-        const TEEModule = require('./TEECryptoService');
+        const TEEModule = await import('./TEECryptoService');
         const teeService = TEEModule.getTEECryptoService();
         await teeService.initialize();
         console.log('✅ TEE Crypto Service initialized');
@@ -147,6 +147,9 @@ class SpeedTrackingServiceClass {
       
       // Create final checkpoint with any pending records
       await this.merkleService.forceCheckpoint();
+      
+      // Process XP rewards if drive-to-earn is enabled
+      await this.processXPRewards();
       
       console.log('Speed tracking stopped');
 
@@ -350,6 +353,117 @@ class SpeedTrackingServiceClass {
     } catch (error) {
       console.error('Failed to export data:', error);
       return null;
+    }
+  }
+
+  /**
+   * Process XP rewards based on the completed tracking session
+   */
+  private async processXPRewards(): Promise<void> {
+    try {
+      // Import XPService dynamically to avoid circular dependencies
+      const { getXPService } = await import('./XPService');
+      const xpService = getXPService();
+      
+      // Check if drive-to-earn is enabled for this user
+      const isDriveToEarnEnabled = await xpService.isDriveToEarnEnabled();
+      if (!isDriveToEarnEnabled) {
+        console.log('🚫 Drive-to-earn not enabled, skipping XP processing');
+        return;
+      }
+      
+      console.log('🎯 Processing XP rewards for completed tracking session...');
+      
+      // Get session stats
+      const stats = await this.getCurrentStats();
+      
+      // Calculate session metrics
+      const sessionData = {
+        totalMiles: stats.totalDistance,
+        avgSpeed: stats.avgSpeed,
+        maxSpeed: stats.maxSpeed,
+        recordCount: stats.recordCount,
+        checkpointCount: stats.checkpointCount,
+      };
+      
+      console.log('📊 Session completed:', sessionData);
+      
+      // Calculate safe driving metrics for XP
+      const safeDrivingData = await this.calculateSafeDrivingMetrics(stats);
+      console.log('🛡️ Safe driving analysis:', safeDrivingData);
+      
+      // Submit XP processing to blockchain (this will calculate XP based on safe driving)
+      await xpService.submitXPToBlockchain();
+      
+      console.log('✅ XP rewards processing completed');
+      
+    } catch (error) {
+      console.error('❌ Failed to process XP rewards:', error);
+      // Don't throw error - XP processing shouldn't block normal tracking stop
+    }
+  }
+
+  /**
+   * Calculate safe driving metrics for XP calculation
+   */
+  private async calculateSafeDrivingMetrics(stats: any): Promise<{
+    safeMiles: number;
+    totalMiles: number;
+    safetyPercentage: number;
+    speedViolations: number;
+    avgSpeedRatio: number;
+  }> {
+    try {
+      const SAFE_SPEED_LIMIT = 75; // mph - should match contract
+      const records = await this.locationService.getRecords();
+      
+      let totalDistance = 0;
+      let safeDistance = 0;
+      let speedViolations = 0;
+      let speedSum = 0;
+      
+      // Analyze each speed record
+      for (let i = 1; i < records.length; i++) {
+        const prevRecord = records[i - 1];
+        const currentRecord = records[i];
+        
+        // Calculate distance for this segment
+        const segmentDistance = this.calculateDistance(
+          prevRecord.latitude, prevRecord.longitude,
+          currentRecord.latitude, currentRecord.longitude
+        );
+        
+        totalDistance += segmentDistance;
+        speedSum += currentRecord.speed;
+        
+        // Check if this segment was safe driving
+        if (currentRecord.speed <= SAFE_SPEED_LIMIT) {
+          safeDistance += segmentDistance;
+        } else {
+          speedViolations++;
+        }
+      }
+      
+      const safetyPercentage = totalDistance > 0 ? (safeDistance / totalDistance) * 100 : 0;
+      const avgSpeedRatio = records.length > 0 ? speedSum / (records.length * SAFE_SPEED_LIMIT) : 0;
+      
+      return {
+        safeMiles: Math.round(safeDistance * 100) / 100,
+        totalMiles: Math.round(totalDistance * 100) / 100,
+        safetyPercentage: Math.round(safetyPercentage * 100) / 100,
+        speedViolations,
+        avgSpeedRatio: Math.round(avgSpeedRatio * 100) / 100,
+      };
+      
+    } catch (error) {
+      console.error('Failed to calculate safe driving metrics:', error);
+      return {
+        safeMiles: 0,
+        totalMiles: stats.totalDistance || 0,
+        safetyPercentage: 0,
+        speedViolations: 0,
+        avgSpeedRatio: 0,
+      };
     }
   }
 

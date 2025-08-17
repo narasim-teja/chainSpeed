@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { usePrivy, useEmbeddedEthereumWallet, getUserEmbeddedEthereumWallet } from '@privy-io/expo';
+import { useRouter } from 'expo-router';
 import { getSpeedTrackingService } from '../services/SpeedTrackingService';
 import { SpeedRecord } from '../services/LocationService';
 import { CheckpointData } from '../services/MerkleService';
@@ -41,6 +42,7 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
   const { wallets, create } = useEmbeddedEthereumWallet();
   const account = getUserEmbeddedEthereumWallet(user);
   const authenticated = !!user;
+  const router = useRouter();
   const [stats, setStats] = useState<TrackingStats>({
     currentSpeed: 0,
     maxSpeed: 0,
@@ -156,7 +158,7 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
       let pendingXP = 0;
       try {
         const xpService = getXPService();
-        driveToEarnEnabled = xpService.isDriveToEarnEnabled();
+        driveToEarnEnabled = await xpService.isDriveToEarnEnabled();
         pendingXP = xpService.getPendingXP();
       } catch {
         // XP service not available, keep defaults
@@ -204,9 +206,32 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
   const stopTracking = async () => {
     try {
       const trackingService = getSpeedTrackingService();
+      
+      // Show processing alert for drive-to-earn users
+      if (stats.driveToEarnEnabled) {
+        Alert.alert(
+          'Processing Session',
+          'Stopping tracking and processing XP rewards...',
+          [],
+          { cancelable: false }
+        );
+      }
+      
       await trackingService.stopTracking();
       
-      Alert.alert('Success', 'Speed tracking stopped!');
+      if (stats.driveToEarnEnabled) {
+        Alert.alert(
+          'Session Complete! 🎉',
+          'Speed tracking stopped and XP rewards have been processed. Check your rewards screen for updates!',
+          [
+            { text: 'View Rewards', onPress: () => router.push('/rewards') },
+            { text: 'OK', style: 'default' }
+          ]
+        );
+      } else {
+        Alert.alert('Success', 'Speed tracking stopped!');
+      }
+      
       await updateStats();
     } catch (error) {
       console.error('Failed to stop tracking:', error);
@@ -332,16 +357,6 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps) {
             </Text>
           )}
           
-          {/* Drive-to-Earn Status */}
-          <View style={styles.statusRow}>
-            <View style={[styles.statusIndicator, stats.driveToEarnEnabled ? styles.connected : styles.disconnected]} />
-            <Text style={styles.statusText}>
-              🎯 Drive-to-Earn {stats.driveToEarnEnabled ? 'Enabled' : 'Disabled'}
-            </Text>
-            {stats.pendingXP > 0 && (
-              <Text style={styles.xpBadge}>+{stats.pendingXP} XP</Text>
-            )}
-          </View>
         </View>
 
         {/* Control Buttons */}
