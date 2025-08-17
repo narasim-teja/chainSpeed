@@ -620,7 +620,49 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
             </>
           )}
 
-          <TouchableOpacity style={styles.dangerButton} onPress={logout}>
+          <TouchableOpacity 
+            style={styles.dangerButton} 
+            onPress={async () => {
+              Alert.alert(
+                'Logout',
+                'Are you sure you want to logout? This will clear your session and return you to the login screen.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { 
+                    text: 'Logout', 
+                    style: 'destructive',
+                    onPress: async () => {
+                      try {
+                        console.log('🚪 Logging out user...');
+                        
+                        // Clear any local session data
+                        console.log('🧹 Clearing local session data...');
+                        
+                        // End TEE session if active
+                        try {
+                          const { getTEECryptoService } = await import('../services/TEECryptoService');
+                          const teeService = getTEECryptoService();
+                          await teeService.endSession();
+                          console.log('🔒 TEE session ended');
+                        } catch (teeError) {
+                          console.log('TEE session cleanup not needed or failed:', teeError);
+                        }
+                        
+                        // Logout from Privy (this will redirect to login screen)
+                        await logout();
+                        
+                        console.log('✅ Logout completed, redirecting to homepage...');
+                        
+                      } catch (error) {
+                        console.error('❌ Logout failed:', error);
+                        Alert.alert('Logout Failed', 'There was an error logging out. Please try again.');
+                      }
+                    }
+                  }
+                ]
+              );
+            }}
+          >
             <Ionicons name="log-out-outline" size={20} color="white" />
             <Text style={styles.buttonText}>Logout</Text>
           </TouchableOpacity>

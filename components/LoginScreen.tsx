@@ -1,47 +1,120 @@
-import { Button, Text, View } from "react-native";
+import React, { useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  SafeAreaView,
+  ActivityIndicator,
+} from "react-native";
 import { useLogin } from "@privy-io/expo/ui";
-import { useState } from "react";
 
 export default function LoginScreen() {
   const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
   const { login } = useLogin();
 
+  const handleLogin = async () => {
+    setIsLoading(true);
+    setError("");
+    
+    try {
+      const session = await login({ loginMethods: ["email"] });
+      console.log("User logged in", session.user);
+    } catch (err: any) {
+      setError(err.message || "Login failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
-    <View
-      style={{
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
-        gap: 20,
-        marginHorizontal: 20,
-      }}
-    >
-      <Text style={{ fontSize: 24, fontWeight: "bold", textAlign: "center" }}>
-        Welcome to ChainSpeed
-      </Text>
-      
-      <Text style={{ fontSize: 16, textAlign: "center", color: "#666" }}>
-        Sign in to get started
-      </Text>
-
-      <Button
-        title="Sign In"
-        onPress={() => {
-          login({ loginMethods: ["email"] })
-            .then((session) => {
-              console.log("User logged in", session.user);
-            })
-            .catch((err) => {
-              setError(err.message || "Login failed");
-            });
-        }}
-      />
-
-      {error && (
-        <Text style={{ color: "red", textAlign: "center", marginTop: 10 }}>
-          {error}
+    <SafeAreaView style={styles.container}>
+      <View style={styles.content}>
+        <Text style={styles.title}>Welcome to ChainSpeed</Text>
+        
+        <Text style={styles.subtitle}>
+          Sign in to get started
         </Text>
-      )}
-    </View>
+
+        <TouchableOpacity
+          style={[styles.loginButton, isLoading && styles.loginButtonDisabled]}
+          onPress={handleLogin}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator color="#fff" size="small" />
+              <Text style={styles.loginButtonText}>Signing In...</Text>
+            </View>
+          ) : (
+            <Text style={styles.loginButtonText}>Sign In</Text>
+          )}
+        </TouchableOpacity>
+
+        {error && (
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
+      </View>
+    </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  content: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 40,
+  },
+  loginButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 15,
+    paddingHorizontal: 30,
+    borderRadius: 8,
+    minWidth: 200,
+    alignItems: 'center',
+  },
+  loginButtonDisabled: {
+    opacity: 0.6,
+  },
+  loginButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  errorContainer: {
+    marginTop: 20,
+    padding: 10,
+    backgroundColor: '#ffebee',
+    borderRadius: 5,
+  },
+  errorText: {
+    color: '#c62828',
+    textAlign: 'center',
+    fontSize: 14,
+  },
+});
