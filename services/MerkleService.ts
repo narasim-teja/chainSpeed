@@ -285,6 +285,19 @@ class MerkleServiceClass {
     }
   }
 
+  /**
+   * Clear all stored checkpoints (for manual cleanup)
+   */
+  public async clearAllCheckpoints(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem(CHECKPOINT_STORAGE_KEY);
+      console.log('✅ All local checkpoints cleared');
+    } catch (error) {
+      console.error('Failed to clear checkpoints:', error);
+      throw error;
+    }
+  }
+
   public async generateMerkleProof(recordTimestamp: number, merkleRoot: string): Promise<MerkleProof | null> {
     try {
       // Load the tree and records for this checkpoint

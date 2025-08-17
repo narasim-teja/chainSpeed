@@ -308,13 +308,13 @@ class TEECryptoService {
         throw new Error('TEE key not initialized');
       }
 
-      // Ensure session is authenticated (should only happen once per session)
+      // Check if session is valid, but don't auto-authenticate
       if (!this.isSessionValid()) {
-        console.log('🔓 Session expired or not authenticated, requesting biometric auth...');
-        await this.authenticateSession();
-      } else {
-        console.log('✅ Using existing authenticated session');
+        console.log('⚠️ TEE session not authenticated or expired. User needs to authenticate first.');
+        throw new Error('TEE session not authenticated. Please authenticate first.');
       }
+      
+      console.log('✅ Using authenticated TEE session for signing');
 
       const timestamp = Date.now();
       const dataString = JSON.stringify(data);
@@ -467,6 +467,13 @@ class TEECryptoService {
       publicKey: this.keyInfo?.publicKey?.substring(0, 20) + '...',
       keyAge: this.keyInfo ? Date.now() - this.keyInfo.createdAt : undefined
     };
+  }
+
+  /**
+   * Check if TEE needs user authentication (for UI state)
+   */
+  public needsAuthentication(): boolean {
+    return this.keyInfo !== null && !this.isSessionValid();
   }
 
   public async resetTEE(): Promise<void> {

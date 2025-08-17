@@ -6,8 +6,11 @@
     "test": "hardhat test",
     "compile": "hardhat compile",
     "clean": "hardhat clean",
-    "deploy:flow-testnet": "hardhat run scripts/deploy.ts --network flowTestnet",
-    "verify:flow-testnet": "hardhat verify --network flowTestnet"
+    "deploy:hedera-testnet": "hardhat run scripts/deploy.ts --network hederaTestnet",
+    "deploy:hedera-testnet-xp-rewards": "hardhat run scripts/deploy-xp-rewards.ts --network hederaTestnet",
+    "deploy:zircuit-testnet": "hardhat run scripts/deploy-zircuit.ts --network zircuitTestnet",
+    "deploy:zircuit-testnet-xp-rewards": "hardhat run scripts/deploy-xp-rewards-zircuit.ts --network zircuitTestnet",
+    "verify:zircuit-testnet": "hardhat verify --network zircuitTestnet"
   },
   "keywords": [],
   "author": "",

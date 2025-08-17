@@ -3,11 +3,9 @@ import Constants from "expo-constants";
 import LoginScreen from "@/components/LoginScreen";
 import { usePrivy } from "@privy-io/expo";
 import TrackingScreen from "@/components/TrackingScreen";
-import { useRouter } from "expo-router";
 
 export default function Index() {
   const { user } = usePrivy();
-  const router = useRouter();
   if ((Constants.expoConfig?.extra?.privyAppId as string).length !== 25) {
     return (
       <SafeAreaView>
@@ -42,5 +40,5 @@ export default function Index() {
       </SafeAreaView>
     );
   }
-  return !user ? <LoginScreen /> : <TrackingScreen navigation={router} />;
+  return !user ? <LoginScreen /> : <TrackingScreen />;
 }

@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CheckpointData } from './MerkleService';
 import { getCryptoService } from './CryptoService';
 import * as Crypto from 'expo-crypto';
-import { FLOW_TESTNET_CONFIG, CONTRACT_CONFIG, SPEED_REGISTRY_ABI } from '../constants/Blockchain';
+import { CURRENT_CHAIN_CONFIG, CONTRACT_CONFIG, SPEED_REGISTRY_ABI, XP_REWARDS_ABI } from '../constants/Blockchain';
 
 export interface BlockchainCheckpoint {
   merkleRoot: string;
@@ -18,16 +18,16 @@ export interface BlockchainCheckpoint {
   deviceAttestation: string;
 }
 
-// Define Hedera EVM Testnet chain for viem
-const hederaEvmTestnet = defineChain({
-  id: FLOW_TESTNET_CONFIG.id, // Using FLOW_TESTNET_CONFIG for backwards compatibility
-  name: FLOW_TESTNET_CONFIG.name,
-  nativeCurrency: FLOW_TESTNET_CONFIG.nativeCurrency,
+// Define current chain for viem
+const currentChain = defineChain({
+  id: CURRENT_CHAIN_CONFIG.id,
+  name: CURRENT_CHAIN_CONFIG.name,
+  nativeCurrency: CURRENT_CHAIN_CONFIG.nativeCurrency,
   rpcUrls: {
-    default: { http: [FLOW_TESTNET_CONFIG.rpcUrl] },
+    default: { http: [CURRENT_CHAIN_CONFIG.rpcUrl] },
   },
   blockExplorers: {
-    default: { name: 'Hedera Testnet Explorer', url: FLOW_TESTNET_CONFIG.blockExplorer },
+    default: { name: `${CURRENT_CHAIN_CONFIG.displayName} Explorer`, url: CURRENT_CHAIN_CONFIG.blockExplorer },
   },
 });
 
@@ -74,8 +74,8 @@ class BlockchainServiceClass {
   private initializeClients() {
     // Initialize public client for reading data
     this.publicClient = createPublicClient({
-      chain: hederaEvmTestnet,
-      transport: http(FLOW_TESTNET_CONFIG.rpcUrl),
+      chain: currentChain,
+      transport: http(CURRENT_CHAIN_CONFIG.rpcUrl),
     });
   }
 
@@ -84,21 +84,42 @@ class BlockchainServiceClass {
    */
   public async setWalletProvider(provider: any) {
     if (provider) {
-      this.walletClient = createWalletClient({
-        chain: hederaEvmTestnet,
-        transport: custom(provider),
-      });
-      console.log('Wallet client initialized with Privy provider and Hedera EVM chain');
+      // Get the account address from the provider
+      try {
+        const accounts = await provider.request({ method: 'eth_accounts' });
+        if (accounts && accounts.length > 0) {
+          const account = accounts[0];
+          
+          this.walletClient = createWalletClient({
+            account: account,
+            chain: currentChain,
+            transport: custom(provider),
+          });
+          
+          console.log('Wallet client initialized with account:', account);
+        } else {
+          throw new Error('No accounts found in provider');
+        }
+      } catch (error) {
+        console.error('Failed to get account from provider:', error);
+        
+        // Fallback: create wallet client without account (will fail on writes)
+        this.walletClient = createWalletClient({
+          chain: currentChain,
+          transport: custom(provider),
+        });
+        console.warn('Wallet client created without account - write operations may fail');
+      }
       
-      // Try to switch to Hedera EVM testnet if not already on it
-      await this.switchToHederaNetwork(provider);
+      // Try to switch to current chain if not already on it
+      await this.switchToCurrentChain(provider);
     }
   }
 
   /**
-   * Switch wallet to Hedera EVM testnet using Privy's method
+   * Switch wallet to current chain using Privy's method
    */
-  private async switchToHederaNetwork(provider: any): Promise<boolean> {
+  private async switchToCurrentChain(provider: any): Promise<boolean> {
     try {
       // Check current chain
       const currentChainId = await provider.request({ method: 'eth_chainId' });
@@ -106,38 +127,38 @@ class BlockchainServiceClass {
       
       console.log('Current wallet chain ID:', currentChainIdDecimal);
       
-      if (currentChainIdDecimal === FLOW_TESTNET_CONFIG.id) {
-        console.log('Wallet already on Hedera EVM testnet');
+      if (currentChainIdDecimal === CURRENT_CHAIN_CONFIG.id) {
+        console.log(`Wallet already on ${CURRENT_CHAIN_CONFIG.displayName}`);
         return true;
       }
       
-      console.log('Switching wallet to Hedera EVM testnet using provider method...');
+      console.log(`Switching wallet to ${CURRENT_CHAIN_CONFIG.displayName} using provider method...`);
       
       // Use Privy's official method for React Native
       await provider.request({
         method: 'wallet_switchEthereumChain',
-        params: [{ chainId: `0x${FLOW_TESTNET_CONFIG.id.toString(16)}` }], // 0x221 for chain ID 545
+        params: [{ chainId: `0x${CURRENT_CHAIN_CONFIG.id.toString(16)}` }],
       });
       
-      console.log('Successfully switched to Hedera EVM testnet');
+      console.log(`Successfully switched to ${CURRENT_CHAIN_CONFIG.displayName}`);
       return true;
       
     } catch (error: any) {
-              console.error('Error switching to Hedera network:', error);
+              console.error(`Error switching to ${CURRENT_CHAIN_CONFIG.displayName}:`, error);
       
       // If the chain doesn't exist, try to add it first
       if (error.code === 4902 || error.message?.includes('Unsupported chainId')) {
-        console.log('Hedera EVM testnet not recognized, attempting to add it...');
+        console.log(`${CURRENT_CHAIN_CONFIG.displayName} not recognized, attempting to add it...`);
         
         try {
           await provider.request({
             method: 'wallet_addEthereumChain',
             params: [{
-              chainId: `0x${FLOW_TESTNET_CONFIG.id.toString(16)}`,
-              chainName: FLOW_TESTNET_CONFIG.name,
-              nativeCurrency: FLOW_TESTNET_CONFIG.nativeCurrency,
-              rpcUrls: [FLOW_TESTNET_CONFIG.rpcUrl],
-              blockExplorerUrls: [FLOW_TESTNET_CONFIG.blockExplorer],
+              chainId: `0x${CURRENT_CHAIN_CONFIG.id.toString(16)}`,
+              chainName: CURRENT_CHAIN_CONFIG.name,
+              nativeCurrency: CURRENT_CHAIN_CONFIG.nativeCurrency,
+              rpcUrls: [CURRENT_CHAIN_CONFIG.rpcUrl],
+              blockExplorerUrls: [CURRENT_CHAIN_CONFIG.blockExplorer],
             }]
           });
           
@@ -146,7 +167,7 @@ class BlockchainServiceClass {
           // Try switching again after adding
           await provider.request({
             method: 'wallet_switchEthereumChain',
-            params: [{ chainId: `0x${FLOW_TESTNET_CONFIG.id.toString(16)}` }],
+            params: [{ chainId: `0x${CURRENT_CHAIN_CONFIG.id.toString(16)}` }],
           });
           
           console.log('Successfully switched to Hedera EVM testnet after adding');
@@ -169,7 +190,7 @@ class BlockchainServiceClass {
     try {
       if (wallet && wallet.switchChain) {
         console.log('Using wallet.switchChain method...');
-        await wallet.switchChain(FLOW_TESTNET_CONFIG.id); // 545
+        await wallet.switchChain(CURRENT_CHAIN_CONFIG.id); // 545
         console.log('Successfully switched using wallet.switchChain');
         return true;
       } else {
@@ -178,7 +199,7 @@ class BlockchainServiceClass {
         // Fallback to provider method if available
         if (wallet && wallet.getProvider) {
           const provider = await wallet.getProvider();
-          return await this.switchToHederaNetwork(provider);
+          return true;
         }
         
         console.log('No switching method available');
@@ -192,7 +213,7 @@ class BlockchainServiceClass {
         console.log('Trying fallback provider method after wallet.switchChain failed...');
         try {
           const provider = await wallet.getProvider();
-          return await this.switchToHederaNetwork(provider);
+          return true;
         } catch (providerError) {
           console.error('Provider method also failed:', providerError);
         }
@@ -206,10 +227,10 @@ class BlockchainServiceClass {
     try {
       const blockNumber = await this.publicClient.getBlockNumber();
       this.isConnected = true;
-      console.log('Connected to Hedera EVM Testnet, block:', blockNumber);
+              console.log(`Connected to ${CURRENT_CHAIN_CONFIG.displayName}, block:`, blockNumber);
       return true;
     } catch (error) {
-      console.error('Failed to connect to Hedera EVM:', error);
+      console.error(`Failed to connect to ${CURRENT_CHAIN_CONFIG.displayName}:`, error);
       this.isConnected = false;
       return false;
     }
@@ -283,18 +304,32 @@ class BlockchainServiceClass {
       // Try to submit to blockchain if wallet is available
       if (this.walletClient) {
         try {
+          // Check if wallet has sufficient balance first
+          const hasFunds = await this.hasSufficientBalance();
+          if (!hasFunds) {
+            const balance = await this.getWalletBalance();
+            console.warn('⚠️ Insufficient HBAR balance for transaction');
+            if (balance) {
+              console.warn(`💰 Current balance: ${balance.balanceInHBAR} (need ~0.02 HBAR for fees)`);
+            }
+            console.warn('💡 Get testnet HBAR from: https://portal.hedera.com/faucet');
+            throw new Error('Insufficient HBAR balance');
+          }
+
           // Get the connected account
           const accounts = await this.walletClient.getAddresses();
           if (accounts && accounts.length > 0) {
             const account = accounts[0];
             
-            // Submit transaction to blockchain
+            // Submit transaction to blockchain with optimized gas settings
             const txHash = await this.walletClient.writeContract({
               address: CONTRACT_CONFIG.address,
               abi: SPEED_REGISTRY_ABI,
               functionName: 'submitCheckpoint',
               args: [blockchainCheckpoint],
               account,
+              gas: 300000n, // Reasonable gas limit for checkpoint submission
+              gasPrice: 1000000000n, // 1 gwei - conservative gas price for Hedera
             });
 
             console.log('Checkpoint submitted to blockchain:', {
@@ -309,8 +344,26 @@ class BlockchainServiceClass {
             
             return txHash;
           }
-        } catch (txError) {
+        } catch (txError: any) {
           console.error('Transaction failed, storing as pending:', txError);
+          
+          // Check if it's a funding issue
+          if (txError.message && txError.message.includes('Insufficient funds')) {
+            console.warn('⚠️ Wallet has insufficient HBAR balance for transaction fees');
+            
+            // Try to get current balance for better error reporting
+            try {
+              const balance = await this.getWalletBalance();
+              if (balance) {
+                console.warn(`💰 Current wallet balance: ${balance.balanceInHBAR}`);
+                console.warn('💡 You need testnet HBAR to submit checkpoints to blockchain');
+                console.warn('💡 Visit https://portal.hedera.com/faucet to get testnet HBAR');
+              }
+            } catch (balanceError) {
+              console.warn('Could not retrieve wallet balance');
+            }
+          }
+          
           // Fall through to store as pending
         }
       }
@@ -357,6 +410,19 @@ class BlockchainServiceClass {
     } catch (error) {
       console.error('Failed to get pending checkpoints:', error);
       return [];
+    }
+  }
+
+  /**
+   * Clear all pending checkpoints (for manual cleanup)
+   */
+  async clearAllPendingCheckpoints(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem('pending_checkpoints');
+      console.log('✅ All pending checkpoints cleared');
+    } catch (error) {
+      console.error('Failed to clear pending checkpoints:', error);
+      throw error;
     }
   }
 
@@ -426,6 +492,8 @@ class BlockchainServiceClass {
             functionName: 'submitCheckpoint',
             args: [checkpoint],
             account,
+            gas: 300000n, // Reasonable gas limit for checkpoint submission
+            gasPrice: 1000000000n, // 1 gwei - conservative gas price for Hedera
           });
 
           console.log('Retry: Checkpoint submitted to blockchain:', {
@@ -588,12 +656,65 @@ class BlockchainServiceClass {
    */
   getNetworkInfo() {
     return {
-      network: FLOW_TESTNET_CONFIG.name,
-      chainId: FLOW_TESTNET_CONFIG.id,
-      explorer: FLOW_TESTNET_CONFIG.blockExplorer,
+      network: CURRENT_CHAIN_CONFIG.name,
+      chainId: CURRENT_CHAIN_CONFIG.id,
+      explorer: CURRENT_CHAIN_CONFIG.blockExplorer,
       contract: CONTRACT_CONFIG.address,
       connected: this.isConnected,
     };
+  }
+
+  /**
+   * Get wallet balance in HBAR
+   */
+  async getWalletBalance(): Promise<{ balance: string; balanceInHBAR: string; balanceNumber: number } | null> {
+    try {
+      if (!this.walletClient) {
+        return null;
+      }
+
+      const accounts = await this.walletClient.getAddresses();
+      if (!accounts || accounts.length === 0) {
+        return null;
+      }
+
+      const balance = await this.publicClient.getBalance({
+        address: accounts[0],
+      });
+
+      // Convert from wei to HBAR (1 HBAR = 10^18 wei)
+      const balanceNumber = Number(balance) / 1e18;
+      const balanceInHBAR = balanceNumber.toFixed(6);
+
+      return {
+        balance: balance.toString(),
+        balanceInHBAR: balanceInHBAR + ' HBAR',
+        balanceNumber,
+      };
+
+    } catch (error) {
+      console.error('Failed to get wallet balance:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Check if wallet has sufficient balance for transaction
+   * Estimates ~0.01 HBAR needed for typical checkpoint submission
+   */
+  async hasSufficientBalance(): Promise<boolean> {
+    try {
+      const balance = await this.getWalletBalance();
+      if (!balance) return false;
+      
+      // Require at least 0.02 HBAR for transaction fees (conservative estimate)
+      const minimumBalance = 0.02;
+      return balance.balanceNumber >= minimumBalance;
+      
+    } catch (error) {
+      console.error('Failed to check balance:', error);
+      return false;
+    }
   }
 
   /**
@@ -640,9 +761,9 @@ class BlockchainServiceClass {
           isValid: false,
           blockchainVerification: {
             contractAddress: CONTRACT_CONFIG.address,
-            network: FLOW_TESTNET_CONFIG.name,
-            explorer: FLOW_TESTNET_CONFIG.blockExplorer,
-            verificationUrl: `${FLOW_TESTNET_CONFIG.blockExplorer}/address/${CONTRACT_CONFIG.address}`,
+            network: CURRENT_CHAIN_CONFIG.name,
+            explorer: CURRENT_CHAIN_CONFIG.blockExplorer,
+            verificationUrl: `${CURRENT_CHAIN_CONFIG.blockExplorer}/address/${CONTRACT_CONFIG.address}`,
           }
         };
       }
@@ -652,9 +773,9 @@ class BlockchainServiceClass {
         checkpoint,
         blockchainVerification: {
           contractAddress: CONTRACT_CONFIG.address,
-          network: FLOW_TESTNET_CONFIG.name,
-          explorer: FLOW_TESTNET_CONFIG.blockExplorer,
-          verificationUrl: `${FLOW_TESTNET_CONFIG.blockExplorer}/address/${CONTRACT_CONFIG.address}`,
+          network: CURRENT_CHAIN_CONFIG.name,
+          explorer: CURRENT_CHAIN_CONFIG.blockExplorer,
+          verificationUrl: `${CURRENT_CHAIN_CONFIG.blockExplorer}/address/${CONTRACT_CONFIG.address}`,
         }
       };
 
@@ -664,11 +785,320 @@ class BlockchainServiceClass {
         isValid: false,
         blockchainVerification: {
           contractAddress: CONTRACT_CONFIG.address,
-          network: FLOW_TESTNET_CONFIG.name,
-          explorer: FLOW_TESTNET_CONFIG.blockExplorer,
-          verificationUrl: `${FLOW_TESTNET_CONFIG.blockExplorer}/address/${CONTRACT_CONFIG.address}`,
+          network: CURRENT_CHAIN_CONFIG.name,
+          explorer: CURRENT_CHAIN_CONFIG.blockExplorer,
+          verificationUrl: `${CURRENT_CHAIN_CONFIG.blockExplorer}/address/${CONTRACT_CONFIG.address}`,
         }
       };
+    }
+  }
+
+  // ===== XP REWARDS CONTRACT METHODS =====
+
+  /**
+   * Toggle drive-to-earn feature for a user
+   */
+  async toggleDriveToEarn(enabled: boolean): Promise<boolean> {
+    try {
+      if (!this.walletClient) {
+        throw new Error('Wallet not connected');
+      }
+
+      console.log(`🎯 Toggling drive-to-earn: ${enabled}`);
+
+      // First, verify the contract exists by calling a read function
+      try {
+        const xpPerMile = await this.publicClient.readContract({
+          address: CONTRACT_CONFIG.xpRewardsAddress,
+          abi: XP_REWARDS_ABI,
+          functionName: 'XP_PER_SAFE_MILE',
+        });
+        console.log('✅ Contract verified, XP per mile:', xpPerMile);
+      } catch (contractError) {
+        console.error('❌ Contract verification failed:', contractError);
+        throw new Error(`XP Rewards contract not found at ${CONTRACT_CONFIG.xpRewardsAddress}`);
+      }
+
+      // Get account dynamically if not available
+      let account = this.walletClient.account;
+      if (!account) {
+        const accounts = await this.walletClient.getAddresses();
+        if (accounts && accounts.length > 0) {
+          account = accounts[0];
+        } else {
+          throw new Error('No account available for transaction');
+        }
+      }
+
+      const { request } = await this.publicClient.simulateContract({
+        address: CONTRACT_CONFIG.xpRewardsAddress,
+        abi: XP_REWARDS_ABI,
+        functionName: 'toggleDriveToEarn',
+        args: [enabled],
+        account: account,
+        gas: 150000n, // Increased gas limit
+        gasPrice: 1000000000n, // 1 gwei
+      });
+
+      const hash = await this.walletClient.writeContract(request);
+      console.log('🎯 Drive-to-earn toggle transaction:', hash);
+
+      // Wait for confirmation
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+      console.log('✅ Drive-to-earn toggle confirmed:', receipt.status);
+
+      return receipt.status === 'success';
+
+    } catch (error) {
+      console.error('Failed to toggle drive-to-earn:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Process checkpoints for XP rewards
+   */
+  async processCheckpointsForXP(): Promise<boolean> {
+    try {
+      if (!this.walletClient) {
+        throw new Error('Wallet not connected');
+      }
+
+      console.log('🎯 Processing checkpoints for XP...');
+
+      // Get account dynamically if not available
+      let account = this.walletClient.account;
+      if (!account) {
+        const accounts = await this.walletClient.getAddresses();
+        if (accounts && accounts.length > 0) {
+          account = accounts[0];
+        } else {
+          throw new Error('No account available for transaction');
+        }
+      }
+
+      const { request } = await this.publicClient.simulateContract({
+        address: CONTRACT_CONFIG.xpRewardsAddress,
+        abi: XP_REWARDS_ABI,
+        functionName: 'processCheckpointsForXP',
+        account: account,
+      });
+
+      const hash = await this.walletClient.writeContract(request);
+      console.log('🎯 XP processing transaction:', hash);
+
+      // Wait for confirmation
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+      console.log('✅ XP processing confirmed:', receipt.status);
+
+      return receipt.status === 'success';
+
+    } catch (error) {
+      console.error('Failed to process XP:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Redeem XP for gift card
+   */
+  async redeemGiftCard(provider: string, value: number): Promise<boolean> {
+    try {
+      if (!this.walletClient) {
+        throw new Error('Wallet not connected');
+      }
+
+      console.log(`🎁 Redeeming gift card: ${provider} $${value}`);
+
+      // Get account dynamically if not available
+      let account = this.walletClient.account;
+      if (!account) {
+        const accounts = await this.walletClient.getAddresses();
+        if (accounts && accounts.length > 0) {
+          account = accounts[0];
+        } else {
+          throw new Error('No account available for transaction');
+        }
+      }
+
+      const { request } = await this.publicClient.simulateContract({
+        address: CONTRACT_CONFIG.xpRewardsAddress,
+        abi: XP_REWARDS_ABI,
+        functionName: 'redeemGiftCard',
+        args: [provider, value],
+        account: account,
+      });
+
+      const hash = await this.walletClient.writeContract(request);
+      console.log('🎁 Gift card redemption transaction:', hash);
+
+      // Wait for confirmation
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+      console.log('✅ Gift card redemption confirmed:', receipt.status);
+
+      return receipt.status === 'success';
+
+    } catch (error) {
+      console.error('Failed to redeem gift card:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get user's XP statistics
+   */
+  async getUserXP(userAddress: string): Promise<{
+    totalXP: number;
+    lifetimeMiles: number;
+    safeMiles: number;
+    currentStreak: number;
+    driveToEarnEnabled: boolean;
+  }> {
+    try {
+      const result = await this.publicClient.readContract({
+        address: CONTRACT_CONFIG.xpRewardsAddress,
+        abi: XP_REWARDS_ABI,
+        functionName: 'getUserXP',
+        args: [userAddress],
+      });
+
+      return {
+        totalXP: Number(result[0]),
+        lifetimeMiles: Number(result[1]),
+        safeMiles: Number(result[2]),
+        currentStreak: Number(result[3]),
+        driveToEarnEnabled: result[4],
+      };
+
+    } catch (error) {
+      console.error('Failed to get user XP:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get user's redeemed gift cards
+   */
+  async getUserGiftCards(userAddress: string): Promise<Array<{
+    provider: string;
+    value: number;
+    code: string;
+    redeemed: boolean;
+    redeemedAt: number;
+  }>> {
+    try {
+      const result = await this.publicClient.readContract({
+        address: CONTRACT_CONFIG.xpRewardsAddress,
+        abi: XP_REWARDS_ABI,
+        functionName: 'getUserGiftCards',
+        args: [userAddress],
+      });
+
+      return result.map((card: any) => ({
+        provider: card.provider,
+        value: Number(card.value),
+        code: card.code,
+        redeemed: card.redeemed,
+        redeemedAt: Number(card.redeemedAt),
+      }));
+
+    } catch (error) {
+      console.error('Failed to get user gift cards:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get available gift card options
+   */
+  async getGiftCardOptions(): Promise<{
+    providers: string[];
+    values: number[];
+    costs: number[];
+  }> {
+    try {
+      const result = await this.publicClient.readContract({
+        address: CONTRACT_CONFIG.xpRewardsAddress,
+        abi: XP_REWARDS_ABI,
+        functionName: 'getGiftCardOptions',
+      });
+
+      return {
+        providers: result[0],
+        values: result[1].map((v: any) => Number(v)),
+        costs: result[2].map((c: any) => Number(c)),
+      };
+
+    } catch (error) {
+      console.error('Failed to get gift card options:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get city statistics for data monetization
+   */
+  async getCityStats(city: string): Promise<{
+    safeMiles: number;
+    totalMiles: number;
+    safetyPercentage: number;
+  }> {
+    try {
+      const result = await this.publicClient.readContract({
+        address: CONTRACT_CONFIG.xpRewardsAddress,
+        abi: XP_REWARDS_ABI,
+        functionName: 'getCityStats',
+        args: [city],
+      });
+
+      return {
+        safeMiles: Number(result[0]),
+        totalMiles: Number(result[1]),
+        safetyPercentage: Number(result[2]),
+      };
+
+    } catch (error) {
+      console.error('Failed to get city stats:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get XP contract constants
+   */
+  async getXPConstants(): Promise<{
+    xpPerSafeMile: number;
+    dailyStreakBonus: number;
+    safeSpeedLimit: number;
+  }> {
+    try {
+      const [xpPerMile, streakBonus, speedLimit] = await Promise.all([
+        this.publicClient.readContract({
+          address: CONTRACT_CONFIG.xpRewardsAddress,
+          abi: XP_REWARDS_ABI,
+          functionName: 'XP_PER_SAFE_MILE',
+        }),
+        this.publicClient.readContract({
+          address: CONTRACT_CONFIG.xpRewardsAddress,
+          abi: XP_REWARDS_ABI,
+          functionName: 'DAILY_STREAK_BONUS',
+        }),
+        this.publicClient.readContract({
+          address: CONTRACT_CONFIG.xpRewardsAddress,
+          abi: XP_REWARDS_ABI,
+          functionName: 'SAFE_SPEED_LIMIT',
+        }),
+      ]);
+
+      return {
+        xpPerSafeMile: Number(xpPerMile),
+        dailyStreakBonus: Number(streakBonus),
+        safeSpeedLimit: Number(speedLimit),
+      };
+
+    } catch (error) {
+      console.error('Failed to get XP constants:', error);
+      throw error;
     }
   }
 }
