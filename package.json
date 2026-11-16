@@ -63,6 +63,7 @@
   "devDependencies": {
     "@babel/core": "^7.25.2",
     "@noble/curves": "^1",
+    "@openzeppelin/merkle-tree": "^1.0.8",
     "@types/react": "~19.0.10",
     "@types/react-native-crypto-js": "^1",
     "eslint": "^9.25.0",

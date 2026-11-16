@@ -1,6 +1,8 @@
 import { createPublicClient, createWalletClient, http, custom, defineChain, type Address, type Hex } from 'viem';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { OutOfOrderCheckpointError, type LocalCheckpoint } from './identity/checkpointInput';
+import { toLeafValues } from './identity/recordTree';
+import type { MerkleProof } from './MerkleService';
 import { CheckpointSubmitter, StaleCheckpointError, type CheckpointChain } from './identity/checkpointSubmitter';
 import { hasDriveSession, signWithDeviceKey } from './identity/deviceRegistration';
 import { CURRENT_CHAIN_CONFIG, CONTRACT_CONFIG, SPEED_REGISTRY_ABI, XP_REWARDS_ABI } from '../constants/Blockchain';
@@ -627,50 +629,21 @@ class BlockchainServiceClass {
   }
 
   /**
-   * Verify a Merkle proof against a stored checkpoint
+   * Verifies on chain that a record belongs to a checkpoint this device anchored
+   * (SpeedRegistry.verifyRecord): Merkle inclusion plus the record's time inside the window.
    */
-  async verifyMerkleProof(
-    merkleRoot: string,
-    proof: string[],
-    leaf: string,
-    indices: number[]
-  ): Promise<boolean> {
+  async verifyRecordOnChain(proof: MerkleProof): Promise<boolean> {
     try {
-      if (!this.isConnected) {
-        await this.checkConnection();
-      }
-
-      // Format all elements for blockchain query
-      const formattedMerkleRoot = this.formatBytes32(merkleRoot, 'Merkle root for proof', false);
-      if (!formattedMerkleRoot) {
-        return false;
-      }
-
-      const formattedProof: string[] = [];
-      for (const p of proof) {
-        const formatted = this.formatBytes32(p, 'proof element', false);
-        if (!formatted) {
-          return false;
-        }
-        formattedProof.push(formatted);
-      }
-
-      const formattedLeaf = this.formatBytes32(leaf, 'proof leaf', false);
-      if (!formattedLeaf) {
-        return false;
-      }
-
-      const isValid = await this.publicClient.readContract({
+      const device = await this.getConnectedAddress();
+      if (!device) return false;
+      return await this.publicClient.readContract({
         address: CONTRACT_CONFIG.address,
         abi: SPEED_REGISTRY_ABI,
-        functionName: 'verifyMerkleProof',
-        args: [await this.getConnectedAddress(), formattedMerkleRoot, formattedProof, formattedLeaf, indices],
+        functionName: 'verifyRecord',
+        args: [device, proof.root, proof.path, toLeafValues(proof.record)],
       });
-
-      return isValid;
-
     } catch (error) {
-      console.error('Failed to verify Merkle proof:', error);
+      console.error('Failed to verify record on chain:', error);
       return false;
     }
   }

@@ -1,21 +1,15 @@
-import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SpeedRecord } from './LocationService';
 import { getCryptoService, SignedData } from './CryptoService';
 import { getBlockchainService } from './BlockchainService';
+import { buildRecordTree, recordLeaf, recordProof, verifyRecordProof, type LeafRecord } from './identity/recordTree';
 
-export interface MerkleNode {
-  hash: string;
-  left?: MerkleNode;
-  right?: MerkleNode;
-  data?: SpeedRecord;
-}
-
+/** Inclusion proof for one record, verifiable on chain with SpeedRegistry.verifyRecord. */
 export interface MerkleProof {
   leaf: string;
   path: string[];
-  indices: number[];
   root: string;
+  record: LeafRecord;
 }
 
 export interface CheckpointData {
@@ -62,8 +56,7 @@ class MerkleServiceClass {
       if (this.pendingRecords.length === 0) return null;
 
       // Build Merkle tree from pending records
-      const merkleTree = await this.buildMerkleTree(this.pendingRecords);
-      if (!merkleTree) return null;
+      const merkleTree = buildRecordTree(this.pendingRecords.map(toLeafRecord));
 
       // Calculate checkpoint statistics
       const stats = this.calculateStats(this.pendingRecords);
@@ -76,7 +69,7 @@ class MerkleServiceClass {
       const endTime = lastRecordTime === firstRecordTime ? firstRecordTime + 1000 : lastRecordTime; // Add 1 second if they're equal
       
       const checkpointData: Omit<CheckpointData, 'signature'> = {
-        merkleRoot: merkleTree.hash,
+        merkleRoot: merkleTree.root,
         startTime: firstRecordTime,
         endTime: endTime,
         avgSpeed: stats.avgSpeed,
@@ -95,7 +88,7 @@ class MerkleServiceClass {
       };
 
       // Store checkpoint and tree
-      await this.storeCheckpoint(finalCheckpoint, merkleTree, this.pendingRecords);
+      await this.storeCheckpoint(finalCheckpoint, merkleTree.tree, this.pendingRecords);
 
       // Submit checkpoint to blockchain
       try {
@@ -129,47 +122,6 @@ class MerkleServiceClass {
       console.error('Failed to create checkpoint:', error);
       return null;
     }
-  }
-
-  private async buildMerkleTree(records: SpeedRecord[]): Promise<MerkleNode | null> {
-    if (records.length === 0) return null;
-
-    // Create leaf nodes
-    let currentLevel: MerkleNode[] = [];
-    for (const record of records) {
-      const hash = await Crypto.digestStringAsync(
-        Crypto.CryptoDigestAlgorithm.SHA256,
-        JSON.stringify(record) + record.signature
-      );
-      currentLevel.push({
-        hash,
-        data: record
-      });
-    }
-
-    // Build tree bottom-up
-    while (currentLevel.length > 1) {
-      const nextLevel: MerkleNode[] = [];
-
-      for (let i = 0; i < currentLevel.length; i += 2) {
-        const left = currentLevel[i];
-        const right = i + 1 < currentLevel.length ? currentLevel[i + 1] : left; // Duplicate if odd
-
-        const parentHash = await Crypto.digestStringAsync(
-          Crypto.CryptoDigestAlgorithm.SHA256,
-          left.hash + right.hash
-        );
-        nextLevel.push({
-          hash: parentHash,
-          left,
-          right: right !== left ? right : undefined
-        });
-      }
-
-      currentLevel = nextLevel;
-    }
-
-    return currentLevel[0];
   }
 
   private calculateStats(records: SpeedRecord[]): {
@@ -237,7 +189,7 @@ class MerkleServiceClass {
 
   private async storeCheckpoint(
     checkpoint: CheckpointData,
-    merkleTree: MerkleNode,
+    merkleTree: string[],
     records: SpeedRecord[]
   ): Promise<void> {
     try {
@@ -300,117 +252,33 @@ class MerkleServiceClass {
 
   public async generateMerkleProof(recordTimestamp: number, merkleRoot: string): Promise<MerkleProof | null> {
     try {
-      // Load the tree and records for this checkpoint
-      const treeKey = `merkle_tree_${merkleRoot}`;
-      const recordsKey = `records_${merkleRoot}`;
-
-      const treeData = await AsyncStorage.getItem(treeKey);
-      const recordsData = await AsyncStorage.getItem(recordsKey);
-
+      const treeData = await AsyncStorage.getItem(`merkle_tree_${merkleRoot}`);
+      const recordsData = await AsyncStorage.getItem(`records_${merkleRoot}`);
       if (!treeData || !recordsData) {
         console.error('Tree or records not found for root:', merkleRoot);
         return null;
       }
-
-      const tree: MerkleNode = JSON.parse(treeData);
+      const tree = JSON.parse(treeData);
+      if (!Array.isArray(tree)) return null; // a tree from before the standard-tree format
       const records: SpeedRecord[] = JSON.parse(recordsData);
 
-      // Find the target record
-      const targetRecord = records.find(r => Math.abs(r.timestamp - recordTimestamp) < 1000);
-      if (!targetRecord) {
+      const target = records.find((r) => Math.abs(r.timestamp - recordTimestamp) < 1000);
+      if (!target || !target.salt) {
         console.error('Target record not found');
         return null;
       }
-
-      // Generate proof path
-      const leafHash = await Crypto.digestStringAsync(
-        Crypto.CryptoDigestAlgorithm.SHA256,
-        JSON.stringify(targetRecord) + targetRecord.signature
-      );
-      const proof = this.generateProofPath(tree, leafHash);
-
-      if (!proof) return null;
-
-      return {
-        leaf: leafHash,
-        path: proof.path,
-        indices: proof.indices,
-        root: merkleRoot
-      };
-
+      const record = toLeafRecord(target);
+      const leaf = recordLeaf(record);
+      return { leaf, path: recordProof(tree, leaf), root: merkleRoot, record };
     } catch (error) {
       console.error('Failed to generate Merkle proof:', error);
       return null;
     }
   }
 
-  private generateProofPath(node: MerkleNode, targetHash: string): { path: string[], indices: number[] } | null {
-    // Find path to target leaf and collect sibling hashes
-    const path: string[] = [];
-    const indices: number[] = [];
-
-    const findPath = (current: MerkleNode, target: string, index: number): boolean => {
-      if (current.hash === target) {
-        return true;
-      }
-
-      if (!current.left && !current.right) {
-        return false; // Leaf node, not our target
-      }
-
-      // Check left subtree
-      if (current.left && findPath(current.left, target, index * 2)) {
-        if (current.right) {
-          path.push(current.right.hash);
-          indices.push(index * 2 + 1);
-        }
-        return true;
-      }
-
-      // Check right subtree
-      if (current.right && findPath(current.right, target, index * 2 + 1)) {
-        path.push(current.left!.hash);
-        indices.push(index * 2);
-        return true;
-      }
-
-      return false;
-    };
-
-    const found = findPath(node, targetHash, 0);
-    return found ? { path, indices } : null;
-  }
-
+  /** Local check of a proof; SpeedRegistry.verifyRecord is the authoritative one. */
   public async verifyMerkleProof(proof: MerkleProof): Promise<boolean> {
-    try {
-      let hash = proof.leaf;
-
-      for (let i = 0; i < proof.path.length; i++) {
-        const sibling = proof.path[i];
-        const index = proof.indices[i];
-
-        // Determine if sibling is left or right
-        if (index % 2 === 0) {
-          // Sibling is left, current hash is right
-          hash = await Crypto.digestStringAsync(
-            Crypto.CryptoDigestAlgorithm.SHA256,
-            sibling + hash
-          );
-        } else {
-          // Sibling is right, current hash is left
-          hash = await Crypto.digestStringAsync(
-            Crypto.CryptoDigestAlgorithm.SHA256,
-            hash + sibling
-          );
-        }
-      }
-
-      return hash === proof.root;
-
-    } catch (error) {
-      console.error('Failed to verify Merkle proof:', error);
-      return false;
-    }
+    return verifyRecordProof(proof.root as `0x${string}`, proof.leaf as `0x${string}`, proof.path as `0x${string}`[]);
   }
 
   public async getCheckpointForTime(timestamp: number): Promise<CheckpointData | null> {
@@ -445,3 +313,14 @@ export const getMerkleService = (): MerkleServiceClass => {
 };
 
 export default MerkleServiceClass;
+/** The fields of a record that its checkpoint commits to. */
+function toLeafRecord(record: SpeedRecord): LeafRecord {
+  return {
+    timestamp: record.timestamp,
+    latitude: record.latitude,
+    longitude: record.longitude,
+    speed: record.speed,
+    accuracy: record.accuracy,
+    salt: record.salt as `0x${string}`,
+  };
+}

@@ -925,6 +925,57 @@ export const SPEED_REGISTRY_ABI = [
   {
     "inputs": [
       {
+        "components": [
+          {
+            "internalType": "uint64",
+            "name": "timestampMs",
+            "type": "uint64"
+          },
+          {
+            "internalType": "int32",
+            "name": "latE6",
+            "type": "int32"
+          },
+          {
+            "internalType": "int32",
+            "name": "lonE6",
+            "type": "int32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "speedCentiMph",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "accuracyCm",
+            "type": "uint32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "salt",
+            "type": "bytes32"
+          }
+        ],
+        "internalType": "struct SpeedRegistry.RecordLeaf",
+        "name": "record",
+        "type": "tuple"
+      }
+    ],
+    "name": "recordLeafHash",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "address",
         "name": "device",
         "type": "address"
@@ -1113,17 +1164,44 @@ export const SPEED_REGISTRY_ABI = [
         "type": "bytes32[]"
       },
       {
-        "internalType": "bytes32",
-        "name": "leaf",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "uint256[]",
-        "name": "indices",
-        "type": "uint256[]"
+        "components": [
+          {
+            "internalType": "uint64",
+            "name": "timestampMs",
+            "type": "uint64"
+          },
+          {
+            "internalType": "int32",
+            "name": "latE6",
+            "type": "int32"
+          },
+          {
+            "internalType": "int32",
+            "name": "lonE6",
+            "type": "int32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "speedCentiMph",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "accuracyCm",
+            "type": "uint32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "salt",
+            "type": "bytes32"
+          }
+        ],
+        "internalType": "struct SpeedRegistry.RecordLeaf",
+        "name": "record",
+        "type": "tuple"
       }
     ],
-    "name": "verifyMerkleProof",
+    "name": "verifyRecord",
     "outputs": [
       {
         "internalType": "bool",

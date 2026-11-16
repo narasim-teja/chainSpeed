@@ -14,7 +14,8 @@ export interface SpeedRecord {
   gyroscope: {x: number, y: number, z: number};
   heading: number;         // degrees
   altitude: number;        // meters
-  signature: string;       // Software attestation
+  salt: string;            // 32 random bytes (hex); hides this record's leaf from proof siblings
+  signature: string;       // Software hash chain (not evidence; see generateSignature)
 }
 
 interface SensorData {
@@ -291,7 +292,8 @@ class LocationServiceClass {
         accelerometer: { ...this.sensorData.accelerometer },
         gyroscope: { ...this.sensorData.gyroscope },
         heading: this.calculateHeading(),
-        altitude: location.coords.altitude || 0
+        altitude: location.coords.altitude || 0,
+        salt: '0x' + Array.from(Crypto.getRandomBytes(32), (b) => b.toString(16).padStart(2, '0')).join(''),
       };
 
       // Validate record

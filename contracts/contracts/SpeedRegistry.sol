@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {P256} from "@openzeppelin/contracts/utils/cryptography/P256.sol";
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 /**
  * @title SpeedRegistry (v2)
@@ -54,6 +55,16 @@ contract SpeedRegistry {
         bytes32 prevRoot;
         uint64 submittedAt;
         bytes32 keyHash; // keccak256(qx, qy) of the key that signed it
+    }
+
+    /// One speed record as committed in a checkpoint's Merkle tree (services/identity/recordTree.ts).
+    struct RecordLeaf {
+        uint64 timestampMs;
+        int32 latE6;
+        int32 lonE6;
+        uint32 speedCentiMph;
+        uint32 accuracyCm;
+        bytes32 salt; // random per record, kept on the device; stops siblings being brute-forced
     }
 
     struct DeviceKey {
@@ -262,26 +273,27 @@ contract SpeedRegistry {
         return deviceCheckpoints[device][index - 1];
     }
 
-    /// @dev Hashing scheme is fixed in the next change (F3, F9); unchanged here apart from the lookup.
-    function verifyMerkleProof(
+    /// @notice OpenZeppelin standard-tree leaf: keccak256(keccak256(abi.encode(record))).
+    function recordLeafHash(RecordLeaf calldata record) public pure returns (bytes32) {
+        return keccak256(bytes.concat(keccak256(abi.encode(record))));
+    }
+
+    /**
+     * @notice True if `record` is one of the records `device` committed to in the checkpoint
+     * anchored with `merkleRoot`, and its timestamp lies inside that checkpoint's window
+     * (with one second of tolerance for the window's rounding to whole seconds).
+     */
+    function verifyRecord(
         address device,
         bytes32 merkleRoot,
-        bytes32[] memory proof,
-        bytes32 leaf,
-        uint256[] memory indices
+        bytes32[] calldata proof,
+        RecordLeaf calldata record
     ) external view returns (bool) {
-        getCheckpointByRoot(device, merkleRoot); // reverts if `device` never anchored this root
-        require(proof.length == indices.length, "Proof and indices length mismatch");
-
-        bytes32 computedHash = leaf;
-        for (uint256 i = 0; i < proof.length; i++) {
-            if (indices[i] % 2 == 0) {
-                computedHash = keccak256(abi.encodePacked(proof[i], computedHash));
-            } else {
-                computedHash = keccak256(abi.encodePacked(computedHash, proof[i]));
-            }
-        }
-        return computedHash == merkleRoot;
+        Checkpoint memory c = getCheckpointByRoot(device, merkleRoot);
+        uint256 startMs = (uint256(c.startTime) - 1) * 1000;
+        uint256 endMs = (uint256(c.endTime) + 1) * 1000;
+        if (record.timestampMs < startMs || record.timestampMs > endMs) return false;
+        return MerkleProof.verifyCalldata(proof, merkleRoot, recordLeafHash(record));
     }
 
     function requestProofForLegal(address device, bytes32 merkleRoot) external {

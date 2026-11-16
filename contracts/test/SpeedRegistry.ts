@@ -5,6 +5,8 @@ import { p256 } from "@noble/curves/p256";
 import type { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import { SpeedRegistry } from "../typechain-types";
 import "@nomicfoundation/hardhat-chai-matchers";
+// The app's own tree code, so the contract is tested against proofs the client really produces (F3).
+import { buildRecordTree, recordLeaf, recordProof, toLeafValues, type LeafRecord } from "../../services/identity/recordTree";
 
 // P-256 group order, for building a deliberately high-s (malleable) signature.
 const P256_N = BigInt("0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
@@ -390,6 +392,69 @@ describe("SpeedRegistry v2", function () {
       // But it can continue forward.
       await time.increase(30);
       await expect(submit(await nextInput(), newKey)).to.emit(registry, "CheckpointSubmitted");
+    });
+  });
+
+  describe("Record proofs (F3, F9)", function () {
+    /** Records inside [startTime, endTime], built the way the app builds them. */
+    function recordsFor(cp: Input, count = 5): LeafRecord[] {
+      return Array.from({ length: count }, (_, i) => ({
+        timestamp: Number(cp.startTime) * 1000 + i * 1000,
+        latitude: 43.653226 + i * 1e-5,
+        longitude: -79.383184,
+        speed: 30 + i,
+        accuracy: 5,
+        salt: ethers.keccak256(ethers.toUtf8Bytes(`salt-${rootCounter}-${i}`)) as `0x${string}`,
+      }));
+    }
+
+    async function anchorTree(records: LeafRecord[], base: Input) {
+      const { root, tree } = buildRecordTree(records);
+      await submit({ ...base, merkleRoot: root, recordCount: records.length });
+      return { root, tree };
+    }
+
+    it("verifies every record using proofs produced by the app's record tree", async function () {
+      const base = await nextInput();
+      const records = recordsFor(base);
+      const { root, tree } = await anchorTree(records, base);
+      for (const r of records) {
+        const proof = recordProof(tree, recordLeaf(r));
+        expect(await registry.verifyRecord(wallet.address, root, proof, toLeafValues(r))).to.equal(true);
+      }
+    });
+
+    it("computes the same leaf hash as the app", async function () {
+      const r = recordsFor(await nextInput(), 1)[0]!;
+      expect(await registry.recordLeafHash(toLeafValues(r))).to.equal(recordLeaf(r));
+    });
+
+    it("rejects a record whose speed was changed after the fact", async function () {
+      const base = await nextInput();
+      const records = recordsFor(base);
+      const { root, tree } = await anchorTree(records, base);
+      const proof = recordProof(tree, recordLeaf(records[2]!));
+      const doctored = { ...records[2]!, speed: records[2]!.speed - 20 };
+      expect(await registry.verifyRecord(wallet.address, root, proof, toLeafValues(doctored))).to.equal(false);
+    });
+
+    it("rejects a record timestamped outside the checkpoint's window", async function () {
+      const base = await nextInput();
+      const records = recordsFor(base);
+      records[4] = { ...records[4]!, timestamp: Number(base.endTime) * 1000 + 60_000 };
+      const { root, tree } = await anchorTree(records, base);
+      const proof = recordProof(tree, recordLeaf(records[4]!));
+      expect(await registry.verifyRecord(wallet.address, root, proof, toLeafValues(records[4]!))).to.equal(false);
+    });
+
+    it("rejects a proof checked against a different device", async function () {
+      const base = await nextInput();
+      const records = recordsFor(base);
+      const { root, tree } = await anchorTree(records, base);
+      const proof = recordProof(tree, recordLeaf(records[0]!));
+      await expect(
+        registry.verifyRecord(other.address, root, proof, toLeafValues(records[0]!))
+      ).to.be.revertedWithCustomError(registry, "CheckpointNotFound");
     });
   });
 
