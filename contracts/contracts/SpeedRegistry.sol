@@ -303,6 +303,16 @@ contract SpeedRegistry {
         emit ProofRequested(device, merkleRoot, block.timestamp);
     }
 
+    /// @notice The fields XPRewards needs from one checkpoint, without copying the whole history (F17).
+    function checkpointSummary(address device, uint256 index)
+        external
+        view
+        returns (uint64 endTime, uint8 avgSpeed, uint16 distanceMeters)
+    {
+        Checkpoint storage c = deviceCheckpoints[device][index];
+        return (c.endTime, c.avgSpeed, c.distanceMeters);
+    }
+
     function getDeviceCheckpointCount(address device) external view returns (uint256) {
         return deviceCheckpoints[device].length;
     }

@@ -312,16 +312,8 @@ class XPService {
           }
         }
         
-        // Fallback to mock data if blockchain read fails
-        const giftCard: UserGiftCard = {
-          provider,
-          value,
-          code: `${provider}-${this.generateMockCode()}`,
-          redeemed: true,
-          redeemedAt: Date.now()
-        };
-        
-        return giftCard;
+        // The XP was burned on chain but the request could not be read back. Never invent a code.
+        return null;
       } else {
         throw new Error('Blockchain not connected - cannot redeem gift card');
       }
@@ -369,18 +361,6 @@ class XPService {
    */
   public getPendingXP(): number {
     return this.pendingXP;
-  }
-
-  /**
-   * Generate mock gift card code
-   */
-  private generateMockCode(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let result = '';
-    for (let i = 0; i < 9; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
   }
 
   /**

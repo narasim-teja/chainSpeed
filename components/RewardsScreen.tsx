@@ -241,7 +241,7 @@ export default function RewardsScreen({ navigation }: RewardsScreenProps) {
                 {card.provider} ${card.value} Gift Card
               </Text>
             </View>
-            <Text style={styles.giftCardCode}>{card.code}</Text>
+            <Text style={styles.giftCardCode}>{card.code || 'Requested (fulfillment not built yet)'}</Text>
           </View>
         ))}
       </View>
@@ -355,9 +355,9 @@ export default function RewardsScreen({ navigation }: RewardsScreenProps) {
                 <Text style={styles.redeemedCardText}>
                   {redeemedCard.provider} ${redeemedCard.value} Gift Card
                 </Text>
-                <Text style={styles.redeemedCardCode}>{redeemedCard.code}</Text>
+                <Text style={styles.redeemedCardCode}>{redeemedCard.code || 'Request recorded'}</Text>
                 <Text style={styles.redeemedCardInstructions}>
-                  Use this code at checkout or in the {redeemedCard.provider} app
+                  Your XP was spent and the request is recorded on chain. Gift card fulfillment is not built, so no code is issued.
                 </Text>
               </View>
             )}

@@ -4,8 +4,10 @@ async function main() {
   console.log("🎯 Deploying XPRewards contract...");
 
   // Get the deployed SpeedRegistry address
-  // You'll need to update this with your actual SpeedRegistry address
-  const SPEED_REGISTRY_ADDRESS = process.env.SPEED_REGISTRY_ADDRESS || "0x..."; // Replace with actual address
+  const SPEED_REGISTRY_ADDRESS = process.env.SPEED_REGISTRY_ADDRESS;
+  if (!SPEED_REGISTRY_ADDRESS || !ethers.isAddress(SPEED_REGISTRY_ADDRESS)) {
+    throw new Error("Set SPEED_REGISTRY_ADDRESS to the SpeedRegistry v2 address");
+  }
   
   if (SPEED_REGISTRY_ADDRESS === "0x...") {
     console.error("❌ Please set SPEED_REGISTRY_ADDRESS environment variable");

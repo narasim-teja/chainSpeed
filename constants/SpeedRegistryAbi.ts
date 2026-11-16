@@ -422,6 +422,40 @@ export const SPEED_REGISTRY_ABI = [
     "inputs": [
       {
         "internalType": "address",
+        "name": "device",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "index",
+        "type": "uint256"
+      }
+    ],
+    "name": "checkpointSummary",
+    "outputs": [
+      {
+        "internalType": "uint64",
+        "name": "endTime",
+        "type": "uint64"
+      },
+      {
+        "internalType": "uint8",
+        "name": "avgSpeed",
+        "type": "uint8"
+      },
+      {
+        "internalType": "uint16",
+        "name": "distanceMeters",
+        "type": "uint16"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
         "name": "",
         "type": "address"
       },

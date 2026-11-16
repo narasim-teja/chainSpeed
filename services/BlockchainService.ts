@@ -1035,34 +1035,6 @@ class BlockchainServiceClass {
   }
 
   /**
-   * Get city statistics for data monetization
-   */
-  async getCityStats(city: string): Promise<{
-    safeMiles: number;
-    totalMiles: number;
-    safetyPercentage: number;
-  }> {
-    try {
-      const result = await this.publicClient.readContract({
-        address: CONTRACT_CONFIG.xpRewardsAddress,
-        abi: XP_REWARDS_ABI,
-        functionName: 'getCityStats',
-        args: [city],
-      });
-
-      return {
-        safeMiles: Number(result[0]),
-        totalMiles: Number(result[1]),
-        safetyPercentage: Number(result[2]),
-      };
-
-    } catch (error) {
-      console.error('Failed to get city stats:', error);
-      throw error;
-    }
-  }
-
-  /**
    * Get device statistics from blockchain
    */
   async getDeviceStats(deviceAddress: string): Promise<{
