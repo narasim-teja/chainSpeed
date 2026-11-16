@@ -28,6 +28,17 @@ export const SPEED_REGISTRY_ABI = [
     "type": "error"
   },
   {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "root",
+        "type": "bytes32"
+      }
+    ],
+    "name": "DuplicateRoot",
+    "type": "error"
+  },
+  {
     "inputs": [],
     "name": "FutureWindow",
     "type": "error"
@@ -329,85 +340,6 @@ export const SPEED_REGISTRY_ABI = [
   {
     "inputs": [
       {
-        "internalType": "bytes32",
-        "name": "",
-        "type": "bytes32"
-      }
-    ],
-    "name": "checkpointByRoot",
-    "outputs": [
-      {
-        "internalType": "bytes32",
-        "name": "merkleRoot",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "uint64",
-        "name": "startTime",
-        "type": "uint64"
-      },
-      {
-        "internalType": "uint64",
-        "name": "endTime",
-        "type": "uint64"
-      },
-      {
-        "internalType": "uint8",
-        "name": "avgSpeed",
-        "type": "uint8"
-      },
-      {
-        "internalType": "uint8",
-        "name": "maxSpeed",
-        "type": "uint8"
-      },
-      {
-        "internalType": "uint8",
-        "name": "minSpeed",
-        "type": "uint8"
-      },
-      {
-        "internalType": "uint16",
-        "name": "distanceMeters",
-        "type": "uint16"
-      },
-      {
-        "internalType": "uint16",
-        "name": "recordCount",
-        "type": "uint16"
-      },
-      {
-        "internalType": "address",
-        "name": "deviceAddress",
-        "type": "address"
-      },
-      {
-        "internalType": "uint64",
-        "name": "seq",
-        "type": "uint64"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "prevRoot",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "uint64",
-        "name": "submittedAt",
-        "type": "uint64"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "keyHash",
-        "type": "bytes32"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
         "internalType": "address",
         "name": "device",
         "type": "address"
@@ -596,6 +528,11 @@ export const SPEED_REGISTRY_ABI = [
   },
   {
     "inputs": [
+      {
+        "internalType": "address",
+        "name": "device",
+        "type": "address"
+      },
       {
         "internalType": "bytes32",
         "name": "merkleRoot",
@@ -1024,6 +961,11 @@ export const SPEED_REGISTRY_ABI = [
   {
     "inputs": [
       {
+        "internalType": "address",
+        "name": "device",
+        "type": "address"
+      },
+      {
         "internalType": "bytes32",
         "name": "merkleRoot",
         "type": "bytes32"
@@ -1155,6 +1097,11 @@ export const SPEED_REGISTRY_ABI = [
   },
   {
     "inputs": [
+      {
+        "internalType": "address",
+        "name": "device",
+        "type": "address"
+      },
       {
         "internalType": "bytes32",
         "name": "merkleRoot",

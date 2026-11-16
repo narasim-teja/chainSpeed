@@ -537,11 +537,14 @@ class BlockchainServiceClass {
         length: formattedMerkleRoot.length
       });
 
+      // Lookups are per device (F5): a root only means something together with who anchored it.
+      const device = await this.getConnectedAddress();
+      if (!device) return null;
       const checkpoint = await this.publicClient.readContract({
         address: CONTRACT_CONFIG.address,
         abi: SPEED_REGISTRY_ABI,
         functionName: 'getCheckpointByRoot',
-        args: [formattedMerkleRoot],
+        args: [device, formattedMerkleRoot],
       });
 
       return {
@@ -661,7 +664,7 @@ class BlockchainServiceClass {
         address: CONTRACT_CONFIG.address,
         abi: SPEED_REGISTRY_ABI,
         functionName: 'verifyMerkleProof',
-        args: [formattedMerkleRoot, formattedProof, formattedLeaf, indices],
+        args: [await this.getConnectedAddress(), formattedMerkleRoot, formattedProof, formattedLeaf, indices],
       });
 
       return isValid;

@@ -71,7 +71,9 @@ contract SpeedRegistry {
     mapping(address => uint64) public lastEndTime;
 
     mapping(address => Checkpoint[]) public deviceCheckpoints;
-    mapping(bytes32 => Checkpoint) public checkpointByRoot;
+    /// (device, root) → 1-based index into deviceCheckpoints. Keyed by device so no one can
+    /// overwrite what another device's root resolves to (F5), and nothing is stored twice.
+    mapping(address => mapping(bytes32 => uint256)) private rootIndex;
     uint256 public totalCheckpoints;
 
     event RegistrarChanged(address indexed previous, address indexed current);
@@ -94,6 +96,7 @@ contract SpeedRegistry {
     error InvalidPublicKey();
     error DeviceNotRegistered(address device);
     error InvalidMerkleRoot();
+    error DuplicateRoot(bytes32 root);
     error NoRecords();
     error OutOfSequence(uint64 expected, uint64 got);
     error WrongPrevRoot(bytes32 expected, bytes32 got);
@@ -175,6 +178,7 @@ contract SpeedRegistry {
         if (!key.active) revert DeviceNotRegistered(device);
 
         if (cp.merkleRoot == bytes32(0)) revert InvalidMerkleRoot();
+        if (rootIndex[device][cp.merkleRoot] != 0) revert DuplicateRoot(cp.merkleRoot);
         if (cp.recordCount == 0) revert NoRecords();
 
         // Chain position: no insertion, deletion, reordering or replay.
@@ -214,7 +218,7 @@ contract SpeedRegistry {
         c.submittedAt = uint64(block.timestamp);
         c.keyHash = keccak256(abi.encode(key.qx, key.qy));
 
-        checkpointByRoot[cp.merkleRoot] = c;
+        rootIndex[device][cp.merkleRoot] = deviceCheckpoints[device].length;
         lastSeq[device] = cp.seq;
         lastRoot[device] = cp.merkleRoot;
         lastEndTime[device] = cp.endTime;
@@ -251,19 +255,22 @@ contract SpeedRegistry {
         return result;
     }
 
-    function getCheckpointByRoot(bytes32 merkleRoot) external view returns (Checkpoint memory) {
-        if (checkpointByRoot[merkleRoot].merkleRoot == bytes32(0)) revert CheckpointNotFound();
-        return checkpointByRoot[merkleRoot];
+    /// @notice The checkpoint `device` anchored with `merkleRoot`. Lookups are always per device.
+    function getCheckpointByRoot(address device, bytes32 merkleRoot) public view returns (Checkpoint memory) {
+        uint256 index = rootIndex[device][merkleRoot];
+        if (index == 0) revert CheckpointNotFound();
+        return deviceCheckpoints[device][index - 1];
     }
 
-    /// @dev Hashing scheme is fixed in Tier 2 (F3, F9); unchanged here.
+    /// @dev Hashing scheme is fixed in the next change (F3, F9); unchanged here apart from the lookup.
     function verifyMerkleProof(
+        address device,
         bytes32 merkleRoot,
         bytes32[] memory proof,
         bytes32 leaf,
         uint256[] memory indices
     ) external view returns (bool) {
-        if (checkpointByRoot[merkleRoot].merkleRoot == bytes32(0)) revert CheckpointNotFound();
+        getCheckpointByRoot(device, merkleRoot); // reverts if `device` never anchored this root
         require(proof.length == indices.length, "Proof and indices length mismatch");
 
         bytes32 computedHash = leaf;
@@ -277,9 +284,9 @@ contract SpeedRegistry {
         return computedHash == merkleRoot;
     }
 
-    function requestProofForLegal(bytes32 merkleRoot) external {
-        if (checkpointByRoot[merkleRoot].merkleRoot == bytes32(0)) revert CheckpointNotFound();
-        emit ProofRequested(checkpointByRoot[merkleRoot].deviceAddress, merkleRoot, block.timestamp);
+    function requestProofForLegal(address device, bytes32 merkleRoot) external {
+        getCheckpointByRoot(device, merkleRoot);
+        emit ProofRequested(device, merkleRoot, block.timestamp);
     }
 
     function getDeviceCheckpointCount(address device) external view returns (uint256) {

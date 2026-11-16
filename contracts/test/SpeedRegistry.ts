@@ -312,9 +312,10 @@ describe("SpeedRegistry v2", function () {
       const cp = await nextInput();
       const { r, s } = await sign(registry, wallet.address, cp, key);
       await registry.submitCheckpoint(wallet.address, cp, r, s);
+      // Caught by the duplicate-root check before the sequence check would also reject it.
       await expect(registry.submitCheckpoint(wallet.address, cp, r, s))
-        .to.be.revertedWithCustomError(registry, "OutOfSequence")
-        .withArgs(2n, 1n);
+        .to.be.revertedWithCustomError(registry, "DuplicateRoot")
+        .withArgs(cp.merkleRoot);
     });
 
     it("rejects skipping a sequence number (hiding a checkpoint)", async function () {
@@ -331,6 +332,37 @@ describe("SpeedRegistry v2", function () {
     it("F4/F15: rejects a distance faster than about 100 mph for the window", async function () {
       const cp = await nextInput({ distanceMeters: 65_535 }); // the review's 40-mile checkpoint
       await expect(submit(cp)).to.be.revertedWithCustomError(registry, "ImpossibleDistance");
+    });
+
+    it("F5: another device reusing a root cannot change what this device's root resolves to", async function () {
+      const victim = await nextInput({ avgSpeed: 30 });
+      await submit(victim);
+
+      // The attacker has a registered device of their own and copies the victim's public root.
+      const attackerKey = makeEnclaveKey();
+      await registry.connect(registrar).registerDevice(other.address, attackerKey.qx, attackerKey.qy);
+      const now = BigInt(await time.latest());
+      const forged: Input = {
+        ...victim,
+        seq: 1n,
+        prevRoot: ethers.ZeroHash,
+        startTime: now - 30n,
+        endTime: now,
+        avgSpeed: 90,
+      };
+      await submit(forged, attackerKey, other.address);
+
+      const resolved = await registry.getCheckpointByRoot(wallet.address, victim.merkleRoot);
+      expect(resolved.deviceAddress).to.equal(wallet.address);
+      expect(resolved.avgSpeed).to.equal(30);
+    });
+
+    it("rejects the same root twice from one device", async function () {
+      const first = await nextInput();
+      await submit(first);
+      await expect(submit(await nextInput({ merkleRoot: first.merkleRoot })))
+        .to.be.revertedWithCustomError(registry, "DuplicateRoot")
+        .withArgs(first.merkleRoot);
     });
 
     it("rejects checkpoints from a revoked key", async function () {
@@ -366,12 +398,12 @@ describe("SpeedRegistry v2", function () {
       const cp = await nextInput();
       await submit(cp);
 
-      expect((await registry.getCheckpointByRoot(cp.merkleRoot)).deviceAddress).to.equal(wallet.address);
+      expect((await registry.getCheckpointByRoot(wallet.address, cp.merkleRoot)).deviceAddress).to.equal(wallet.address);
       const stats = await registry.getDeviceStats(wallet.address);
       expect(stats.totalDistance).to.equal(500);
       expect(stats.maxRecordedSpeed).to.equal(45);
       expect(stats.checkpointCount).to.equal(1);
-      await expect(registry.getCheckpointByRoot(root())).to.be.revertedWithCustomError(
+      await expect(registry.getCheckpointByRoot(wallet.address, root())).to.be.revertedWithCustomError(
         registry,
         "CheckpointNotFound"
       );
