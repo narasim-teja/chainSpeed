@@ -10,22 +10,27 @@ ChainSpeed is a React Native mobile app built with Expo that demonstrates Privy 
 
 **Setup and Installation:**
 ```bash
-yarn install          # Install dependencies (preferred)
-# or: bun install     # Alternative package manager
-# or: npm install     # Fallback option
+bun install           # Install dependencies (bun is the only package manager; don't use yarn or npm)
 ```
 
 **Development:**
 ```bash
-yarn start            # Start development server with dev client
-yarn start-expo-go    # Start with Expo Go app
-yarn ios              # Run on iOS simulator/device
-yarn android          # Run on Android simulator/device
+bun run start         # Start development server with dev client
+bun run start-expo-go # Start with Expo Go app
+bun run ios           # Run on iOS simulator/device
+bun run android       # Run on Android simulator/device
 ```
 
 **Code Quality:**
 ```bash
-yarn lint             # Run ESLint
+bun run lint          # Run ESLint
+bunx tsc --noEmit     # Typecheck (errors under contracts/test are mocha globals, not app errors)
+```
+
+**Contracts** (in `contracts/`, also bun):
+```bash
+bun install
+bunx hardhat test
 ```
 
 **Build Tools:**

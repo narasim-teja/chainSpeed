@@ -52,16 +52,16 @@ These contracts match the security limitations described above.
 
 - Node.js 18+
 - An iOS device for the full flow (the app falls back to software hashing on simulators)
-- Expo CLI
+- [Bun](https://bun.sh) 1.4+
 
 ### Install and run
 
 ```bash
 git clone https://github.com/narasim-teja/chainSpeed.git
 cd chainSpeed
-yarn install
-yarn start   # dev server
-yarn ios     # run on iOS
+bun install
+bun run start   # dev server
+bun run ios     # run on iOS
 ```
 
 ### Configuration
@@ -117,8 +117,9 @@ chainspeed/
 
 ```bash
 cd contracts
-npx hardhat test                                                    # SpeedRegistry tests (XPRewards is untested)
-npx hardhat run scripts/deploy-hedera.ts --network hederaTestnet    # deploy to Hedera testnet
+bun install
+bunx hardhat test                                                    # SpeedRegistry tests (XPRewards is untested)
+bunx hardhat run scripts/deploy-hedera.ts --network hederaTestnet    # deploy to Hedera testnet
 ```
 
 Deployment reads `PRIVATE_KEY` from the environment.
