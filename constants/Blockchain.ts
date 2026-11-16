@@ -16,177 +16,21 @@ export const CURRENT_CHAIN_CONFIG = {
 export const HEDERA_TESTNET_CONFIG = CURRENT_CHAIN_CONFIG;
 
 
-// Smart contract configuration  
+// Smart contract configuration.
+// SpeedRegistry v2 (signed checkpoints) is set per environment; see .env.example.
 export const CONTRACT_CONFIG = {
-  address: '0xBB8647F3eCa9fb1f2eb049B07697Ad02f8720ac8' as const, // SpeedRegistry Contract
-  xpRewardsAddress: '0x7224Cf802c4e6bDE9e67C8Eec2673dB85B0B7816' as const, // XP Rewards Contract
+  address: (process.env.EXPO_PUBLIC_SPEED_REGISTRY_ADDRESS ?? '0x0000000000000000000000000000000000000000') as `0x${string}`,
+  // XPRewards still points at the v1 registry until it is redeployed in Tier 2.
+  xpRewardsAddress: '0x7224Cf802c4e6bDE9e67C8Eec2673dB85B0B7816' as const,
 };
 
-// Contract ABI for SpeedRegistry
-export const SPEED_REGISTRY_ABI = [
-  {
-    "inputs": [
-      {
-        "components": [
-          {"internalType": "bytes32", "name": "merkleRoot", "type": "bytes32"},
-          {"internalType": "uint256", "name": "startTime", "type": "uint256"},
-          {"internalType": "uint256", "name": "endTime", "type": "uint256"},
-          {"internalType": "uint8", "name": "avgSpeed", "type": "uint8"},
-          {"internalType": "uint8", "name": "maxSpeed", "type": "uint8"},
-          {"internalType": "uint8", "name": "minSpeed", "type": "uint8"},
-          {"internalType": "uint16", "name": "distanceMeters", "type": "uint16"},
-          {"internalType": "uint16", "name": "recordCount", "type": "uint16"},
-          {"internalType": "address", "name": "deviceAddress", "type": "address"},
-          {"internalType": "bytes32", "name": "deviceAttestation", "type": "bytes32"}
-        ],
-        "internalType": "struct SpeedRegistry.Checkpoint",
-        "name": "checkpoint",
-        "type": "tuple"
-      }
-    ],
-    "name": "submitCheckpoint",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [{"internalType": "address", "name": "device", "type": "address"}],
-    "name": "getDeviceCheckpoints",
-    "outputs": [
-      {
-        "components": [
-          {"internalType": "bytes32", "name": "merkleRoot", "type": "bytes32"},
-          {"internalType": "uint256", "name": "startTime", "type": "uint256"},
-          {"internalType": "uint256", "name": "endTime", "type": "uint256"},
-          {"internalType": "uint8", "name": "avgSpeed", "type": "uint8"},
-          {"internalType": "uint8", "name": "maxSpeed", "type": "uint8"},
-          {"internalType": "uint8", "name": "minSpeed", "type": "uint8"},
-          {"internalType": "uint16", "name": "distanceMeters", "type": "uint16"},
-          {"internalType": "uint16", "name": "recordCount", "type": "uint16"},
-          {"internalType": "address", "name": "deviceAddress", "type": "address"},
-          {"internalType": "bytes32", "name": "deviceAttestation", "type": "bytes32"}
-        ],
-        "internalType": "struct SpeedRegistry.Checkpoint[]",
-        "name": "",
-        "type": "tuple[]"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [{"internalType": "bytes32", "name": "merkleRoot", "type": "bytes32"}],
-    "name": "getCheckpointByRoot",
-    "outputs": [
-      {
-        "components": [
-          {"internalType": "bytes32", "name": "merkleRoot", "type": "bytes32"},
-          {"internalType": "uint256", "name": "startTime", "type": "uint256"},
-          {"internalType": "uint256", "name": "endTime", "type": "uint256"},
-          {"internalType": "uint8", "name": "avgSpeed", "type": "uint8"},
-          {"internalType": "uint8", "name": "maxSpeed", "type": "uint8"},
-          {"internalType": "uint8", "name": "minSpeed", "type": "uint8"},
-          {"internalType": "uint16", "name": "distanceMeters", "type": "uint16"},
-          {"internalType": "uint16", "name": "recordCount", "type": "uint16"},
-          {"internalType": "address", "name": "deviceAddress", "type": "address"},
-          {"internalType": "bytes32", "name": "deviceAttestation", "type": "bytes32"}
-        ],
-        "internalType": "struct SpeedRegistry.Checkpoint",
-        "name": "",
-        "type": "tuple"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {"internalType": "bytes32", "name": "merkleRoot", "type": "bytes32"},
-      {"internalType": "bytes32[]", "name": "proof", "type": "bytes32[]"},
-      {"internalType": "bytes32", "name": "leaf", "type": "bytes32"},
-      {"internalType": "uint256[]", "name": "indices", "type": "uint256[]"}
-    ],
-    "name": "verifyMerkleProof",
-    "outputs": [{"internalType": "bool", "name": "", "type": "bool"}],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "totalCheckpoints",
-    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [{"internalType": "address", "name": "device", "type": "address"}],
-    "name": "getDeviceCheckpointCount",
-    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {"internalType": "address", "name": "device", "type": "address"},
-      {"internalType": "uint256", "name": "startTime", "type": "uint256"},
-      {"internalType": "uint256", "name": "endTime", "type": "uint256"}
-    ],
-    "name": "getDeviceCheckpointsInRange",
-    "outputs": [
-      {
-        "components": [
-          {"internalType": "bytes32", "name": "merkleRoot", "type": "bytes32"},
-          {"internalType": "uint256", "name": "startTime", "type": "uint256"},
-          {"internalType": "uint256", "name": "endTime", "type": "uint256"},
-          {"internalType": "uint8", "name": "avgSpeed", "type": "uint8"},
-          {"internalType": "uint8", "name": "maxSpeed", "type": "uint8"},
-          {"internalType": "uint8", "name": "minSpeed", "type": "uint8"},
-          {"internalType": "uint16", "name": "distanceMeters", "type": "uint16"},
-          {"internalType": "uint16", "name": "recordCount", "type": "uint16"},
-          {"internalType": "address", "name": "deviceAddress", "type": "address"},
-          {"internalType": "bytes32", "name": "deviceAttestation", "type": "bytes32"}
-        ],
-        "internalType": "struct SpeedRegistry.Checkpoint[]",
-        "name": "",
-        "type": "tuple[]"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [{"internalType": "address", "name": "device", "type": "address"}],
-    "name": "getDeviceStats",
-    "outputs": [
-      {"internalType": "uint256", "name": "totalDistance", "type": "uint256"},
-      {"internalType": "uint256", "name": "totalTime", "type": "uint256"},
-      {"internalType": "uint8", "name": "maxRecordedSpeed", "type": "uint8"},
-      {"internalType": "uint256", "name": "checkpointCount", "type": "uint256"}
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [{"internalType": "bytes32", "name": "merkleRoot", "type": "bytes32"}],
-    "name": "requestProofForLegal",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {"indexed": true, "internalType": "address", "name": "device", "type": "address"},
-      {"indexed": true, "internalType": "bytes32", "name": "merkleRoot", "type": "bytes32"},
-      {"indexed": false, "internalType": "uint256", "name": "startTime", "type": "uint256"},
-      {"indexed": false, "internalType": "uint256", "name": "endTime", "type": "uint256"},
-      {"indexed": false, "internalType": "uint8", "name": "avgSpeed", "type": "uint8"},
-      {"indexed": false, "internalType": "uint8", "name": "maxSpeed", "type": "uint8"}
-    ],
-    "name": "CheckpointSubmitted",
-    "type": "event"
-  }
-] as const;
+// The device registrar (server/). Must be reachable from the phone.
+export const IDENTITY_CONFIG = {
+  registrarUrl: process.env.EXPO_PUBLIC_REGISTRAR_URL ?? '',
+};
+
+// Generated from the compiled contract by contracts/scripts/export-abi.ts.
+export { SPEED_REGISTRY_ABI } from './SpeedRegistryAbi';
 
 // Contract ABI for XPRewards
 export const XP_REWARDS_ABI = [

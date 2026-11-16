@@ -19,17 +19,8 @@ class SpeedTrackingServiceClass {
 
       console.log('Initializing SpeedTrackingService...');
 
-      // Initialize TEE crypto service (but don't authenticate yet)
-      try {
-        const TEEModule = await import('./TEECryptoService');
-        const teeService = TEEModule.getTEECryptoService();
-        await teeService.initialize();
-        console.log('✅ TEE Crypto Service initialized (authentication pending)');
-      } catch (teeError) {
-        console.warn('⚠️ TEE initialization failed, using software fallback:', teeError);
-        // Continue with software-based signing as fallback
-        await this.cryptoService.getDeviceAttestation();
-      }
+      // Checkpoints are signed by the Secure Enclave key at submission time
+      // (services/identity); there is nothing to initialize here.
 
       // Request permissions
       const hasPermissions = await this.locationService.requestPermissions();

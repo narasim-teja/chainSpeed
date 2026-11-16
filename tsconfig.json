@@ -14,6 +14,9 @@
     "**/*.ts",
     "**/*.tsx",
     ".expo/types/**/*.ts",
-    "expo-env.d.ts"
-, "app/index.js"  ]
+    "expo-env.d.ts",
+    "app/index.js"
+  ],
+  // contracts/ and server/ are separate projects with their own tsconfig.
+  "exclude": ["node_modules", "contracts", "server", "**/*.test.ts"]
 }

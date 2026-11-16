@@ -130,48 +130,20 @@ class LocationServiceClass {
     return heading;
   }
 
+  /**
+   * Per-record software hash chain. This is not a signature and not evidence on its own:
+   * the evidence boundary is the checkpoint, whose Merkle root (committing to these
+   * records) is signed by the Secure Enclave key. See docs/identity-design.md.
+   */
   private async generateSignature(record: Omit<SpeedRecord, 'signature'>): Promise<string> {
-    try {
-      // Try TEE hardware signing first if available and authenticated
-      const TEEModule = require('./TEECryptoService');
-      const teeService = TEEModule.getTEECryptoService();
-      
-      // Check if TEE is ready before attempting to sign
-      const teeStatus = await teeService.getTEEStatus();
-      if (teeStatus.keyGenerated && teeStatus.sessionActive) {
-        console.log('🔐 Using TEE hardware signing');
-        const teeSignature = await teeService.signSpeedData(record);
-        return teeSignature.signature;
-      } else {
-        console.log('⚠️ TEE not ready (keyGenerated:', teeStatus.keyGenerated, ', sessionActive:', teeStatus.sessionActive, '), using software signing');
-        throw new Error('TEE not ready');
-      }
-      
-    } catch (error) {
-      console.log('📝 Using software signing:', error instanceof Error ? error.message : String(error));
-      
-      // Fallback to software signing
-      const dataString = JSON.stringify(record);
-      const previousHash = this.previousRecord ? 
-        await Crypto.digestStringAsync(
-          Crypto.CryptoDigestAlgorithm.SHA256,
-          JSON.stringify(this.previousRecord)
-        ) : '0';
-      
-      const signatureData = {
-        data: dataString,
-        deviceKey: this.deviceKey,
-        previousHash,
-        timestamp: Date.now()
-      };
-
-      const softwareSignature = await Crypto.digestStringAsync(
-        Crypto.CryptoDigestAlgorithm.SHA256,
-        JSON.stringify(signatureData)
-      );
-      
-      return `SW:${softwareSignature}`; // Mark as software signature
-    }
+    const previousHash = this.previousRecord
+      ? await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, JSON.stringify(this.previousRecord))
+      : '0';
+    const chained = await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      JSON.stringify({ data: JSON.stringify(record), deviceKey: this.deviceKey, previousHash })
+    );
+    return `SW:${chained}`;
   }
 
   private async validateRecord(record: SpeedRecord): Promise<boolean> {

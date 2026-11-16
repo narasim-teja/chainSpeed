@@ -1,8 +1,8 @@
-import { createPublicClient, createWalletClient, http, custom, defineChain } from 'viem';
+import { createPublicClient, createWalletClient, http, custom, defineChain, type Address, type Hex } from 'viem';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CheckpointData } from './MerkleService';
-import { getCryptoService } from './CryptoService';
-import * as Crypto from 'expo-crypto';
+import { OutOfOrderCheckpointError, type LocalCheckpoint } from './identity/checkpointInput';
+import { CheckpointSubmitter, StaleCheckpointError, type CheckpointChain } from './identity/checkpointSubmitter';
+import { hasDriveSession, signWithDeviceKey } from './identity/deviceRegistration';
 import { CURRENT_CHAIN_CONFIG, CONTRACT_CONFIG, SPEED_REGISTRY_ABI, XP_REWARDS_ABI } from '../constants/Blockchain';
 
 export interface BlockchainCheckpoint {
@@ -15,7 +15,7 @@ export interface BlockchainCheckpoint {
   distanceMeters: number;
   recordCount: number;
   deviceAddress: string;
-  deviceAttestation: string;
+  keyHash: string; // keccak256(qx, qy) of the enclave key that signed it
 }
 
 // Define current chain for viem
@@ -34,6 +34,7 @@ const currentChain = defineChain({
 class BlockchainServiceClass {
   private publicClient: any;
   private walletClient: any = null;
+  private checkpointSubmitter: CheckpointSubmitter | null = null;
   private isConnected = false;
   private xpCache: Map<string, { data: any; timestamp: number; }> = new Map();
   private readonly CACHE_DURATION = 30000; // 30 seconds cache
@@ -308,175 +309,117 @@ class BlockchainServiceClass {
   }
 
   /**
-   * Submit a checkpoint to the blockchain using Privy's embedded wallet
+   * Signs a checkpoint with the device's Secure Enclave key and submits it to
+   * SpeedRegistry v2 (see docs/identity-design.md). Submissions are serialized
+   * and signed at send time, chained to the device's on-chain position.
+   *
+   * Returns the transaction hash; 'pending-…' if it was queued for a retry
+   * (no wallet, no drive session, or a transient failure); or null if it can
+   * no longer be anchored (past the contract's 10-minute window).
    */
-  async submitCheckpoint(checkpoint: CheckpointData): Promise<string | null> {
-    try {
-      const cryptoService = getCryptoService();
-      const deviceAttestation = await cryptoService.getDeviceAttestation();
-      
-      // Create device attestation hash
-      const attestationHash = await Crypto.digestStringAsync(
-        Crypto.CryptoDigestAlgorithm.SHA256,
-        JSON.stringify(deviceAttestation)
-      );
+  async submitCheckpoint(checkpoint: LocalCheckpoint): Promise<string | null> {
+    const local: LocalCheckpoint = {
+      merkleRoot: checkpoint.merkleRoot,
+      startTime: checkpoint.startTime,
+      endTime: checkpoint.endTime,
+      avgSpeed: checkpoint.avgSpeed,
+      maxSpeed: checkpoint.maxSpeed,
+      minSpeed: checkpoint.minSpeed,
+      distanceMeters: checkpoint.distanceMeters,
+      recordCount: checkpoint.recordCount,
+    };
 
-      // Create blockchain checkpoint format
-      const formattedMerkleRoot = this.formatBytes32(checkpoint.merkleRoot, 'Merkle root');
-      const formattedAttestation = this.formatBytes32(attestationHash, 'attestation hash');
-      
-      if (!formattedMerkleRoot || !formattedAttestation) {
-        throw new Error('Failed to format checkpoint data for blockchain submission');
-      }
-      
-      console.log('Formatting checkpoint for blockchain:', {
-        originalMerkleRoot: checkpoint.merkleRoot,
-        formattedMerkleRoot,
-        merkleRootLength: formattedMerkleRoot.length,
-        originalAttestation: attestationHash,
-        formattedAttestation,
-        attestationLength: formattedAttestation.length,
-        startTime: checkpoint.startTime,
-        endTime: checkpoint.endTime,
-        timeDifference: checkpoint.endTime - checkpoint.startTime,
-        startTimeInSeconds: Math.floor(checkpoint.startTime / 1000),
-        endTimeInSeconds: Math.floor(checkpoint.endTime / 1000),
-        timeDifferenceInSeconds: Math.floor(checkpoint.endTime / 1000) - Math.floor(checkpoint.startTime / 1000),
-      });
-      
-      // Convert timestamps to seconds and ensure endTime > startTime (contract requirement)
-      const startTimeInSeconds = Math.floor(checkpoint.startTime / 1000);
-      const endTimeInSeconds = Math.floor(checkpoint.endTime / 1000);
-      
-      // Ensure endTime is greater than startTime (smart contract validation)
-      const finalEndTime = endTimeInSeconds <= startTimeInSeconds ? startTimeInSeconds + 1 : endTimeInSeconds;
-      
-      if (finalEndTime !== endTimeInSeconds) {
-        console.log('Adjusted endTime to satisfy contract requirement:', {
-          originalEndTime: endTimeInSeconds,
-          adjustedEndTime: finalEndTime,
-          startTime: startTimeInSeconds
-        });
-      }
-      
-      const blockchainCheckpoint: BlockchainCheckpoint = {
-        merkleRoot: formattedMerkleRoot,
-        startTime: startTimeInSeconds,
-        endTime: finalEndTime,
-        avgSpeed: Math.min(255, Math.max(0, checkpoint.avgSpeed)), // Ensure uint8 range (0-255)
-        maxSpeed: Math.min(255, Math.max(0, checkpoint.maxSpeed)), // Ensure uint8 range (0-255)
-        minSpeed: Math.min(255, Math.max(0, checkpoint.minSpeed)), // Ensure uint8 range (0-255)
-        distanceMeters: Math.min(65535, Math.max(0, checkpoint.distanceMeters)), // Ensure uint16 range (0-65535)
-        recordCount: Math.min(65535, Math.max(0, checkpoint.recordCount)), // Ensure uint16 range (0-65535)
-        deviceAddress: '0x0000000000000000000000000000000000000000', // Will be set by contract
-        deviceAttestation: formattedAttestation,
-      };
-
-      // Try to submit to blockchain if wallet is available
-      if (this.walletClient) {
-        try {
-          // Check if wallet has sufficient balance first
-          const hasFunds = await this.hasSufficientBalance();
-          if (!hasFunds) {
-            const balance = await this.getWalletBalance();
-            console.warn('⚠️ Insufficient HBAR balance for transaction');
-            if (balance) {
-              console.warn(`💰 Current balance: ${balance.balanceInHBAR} (need ~0.02 HBAR for fees)`);
-            }
-            console.warn('💡 Get testnet HBAR from: https://portal.hedera.com/faucet');
-            throw new Error('Insufficient HBAR balance');
-          }
-
-          // Get the connected account
-          const accounts = await this.walletClient.getAddresses();
-          if (accounts && accounts.length > 0) {
-            const account = accounts[0];
-            
-            // Submit transaction to blockchain with optimized gas settings
-            const txHash = await this.walletClient.writeContract({
-              address: CONTRACT_CONFIG.address,
-              abi: SPEED_REGISTRY_ABI,
-              functionName: 'submitCheckpoint',
-              args: [blockchainCheckpoint],
-              account,
-              gas: 300000n, // Reasonable gas limit for checkpoint submission
-              gasPrice: 1000000000n, // 1 gwei - conservative gas price for Hedera
-            });
-
-            console.log('Checkpoint submitted to blockchain:', {
-              merkleRoot: checkpoint.merkleRoot.substring(0, 8) + '...',
-              txHash: txHash.substring(0, 8) + '...',
-              records: checkpoint.recordCount,
-              timespan: (checkpoint.endTime - checkpoint.startTime) / 1000 + 's'
-            });
-
-            // Remove from pending checkpoints since it's submitted
-            await this.removePendingCheckpoint(blockchainCheckpoint.merkleRoot);
-            
-            return txHash;
-          }
-        } catch (txError: any) {
-          console.error('Transaction failed, storing as pending:', txError);
-          
-          // Check if it's a funding issue
-          if (txError.message && txError.message.includes('Insufficient funds')) {
-            console.warn('⚠️ Wallet has insufficient HBAR balance for transaction fees');
-            
-            // Try to get current balance for better error reporting
-            try {
-              const balance = await this.getWalletBalance();
-              if (balance) {
-                console.warn(`💰 Current wallet balance: ${balance.balanceInHBAR}`);
-                console.warn('💡 You need testnet HBAR to submit checkpoints to blockchain');
-                console.warn('💡 Visit https://portal.hedera.com/faucet to get testnet HBAR');
-              }
-            } catch (balanceError) {
-              console.warn('Could not retrieve wallet balance');
-            }
-          }
-          
-          // Fall through to store as pending
-        }
-      }
-
-      // Store checkpoint for later blockchain submission (wallet not available or tx failed)
-      await this.storePendingCheckpoint(blockchainCheckpoint);
-
-      console.log('Checkpoint stored as pending:', {
-        merkleRoot: checkpoint.merkleRoot.substring(0, 8) + '...',
-        timespan: (checkpoint.endTime - checkpoint.startTime) / 1000 + 's',
-        records: checkpoint.recordCount,
-        reason: this.walletClient ? 'Transaction failed' : 'No wallet connected'
-      });
-
-      // Return a pending transaction identifier
+    const device = await this.getConnectedAddress();
+    if (!device) {
+      await this.storePendingCheckpoint(local);
       return 'pending-' + Date.now().toString();
+    }
+    if (!hasDriveSession()) {
+      console.warn('No drive session: checkpoint queued unsigned until Face ID unlocks the signing key');
+      await this.storePendingCheckpoint(local);
+      return 'pending-' + Date.now().toString();
+    }
 
+    try {
+      const txHash = await this.getCheckpointSubmitter().submit(device, local);
+      await this.removePendingCheckpoint(local.merkleRoot);
+      console.log('Signed checkpoint anchored:', { root: local.merkleRoot.substring(0, 10) + '...', txHash });
+      return txHash;
     } catch (error) {
-      console.error('Failed to submit checkpoint:', error);
-      return null;
+      if (error instanceof StaleCheckpointError || error instanceof OutOfOrderCheckpointError) {
+        await this.removePendingCheckpoint(local.merkleRoot);
+        await this.storeUnanchoredCheckpoint(local, error.message);
+        return null;
+      }
+      console.error('Checkpoint submission failed, queued for retry:', error);
+      await this.storePendingCheckpoint(local);
+      return 'pending-' + Date.now().toString();
     }
   }
 
-  private async storePendingCheckpoint(checkpoint: BlockchainCheckpoint): Promise<void> {
+  private async getConnectedAddress(): Promise<Address | null> {
+    if (!this.walletClient) return null;
+    const accounts = await this.walletClient.getAddresses().catch(() => []);
+    return accounts && accounts.length > 0 ? (accounts[0] as Address) : null;
+  }
+
+  private getCheckpointSubmitter(): CheckpointSubmitter {
+    if (!this.checkpointSubmitter) {
+      const chain: CheckpointChain = {
+        chainId: CURRENT_CHAIN_CONFIG.id,
+        registry: CONTRACT_CONFIG.address,
+        readPosition: async (device) => {
+          const read = (functionName: 'lastSeq' | 'lastRoot' | 'lastEndTime') =>
+            this.publicClient.readContract({
+              address: CONTRACT_CONFIG.address,
+              abi: SPEED_REGISTRY_ABI,
+              functionName,
+              args: [device],
+            });
+          const [seq, prevRoot, lastEndTime] = await Promise.all([read('lastSeq'), read('lastRoot'), read('lastEndTime')]);
+          return { seq: BigInt(seq), prevRoot: prevRoot as Hex, lastEndTime: BigInt(lastEndTime) };
+        },
+        sendCheckpoint: async (device, input, r, s) => {
+          if (!this.walletClient) throw new Error('No wallet connected');
+          const request = {
+            address: CONTRACT_CONFIG.address,
+            abi: SPEED_REGISTRY_ABI,
+            functionName: 'submitCheckpoint',
+            args: [device, input, r, s],
+            account: device,
+          } as const;
+          // Hedera charges for at least 80% of the gas limit, so estimate instead of over-provisioning.
+          // Estimation also surfaces the contract's revert reason before anything is sent.
+          const estimate: bigint = await this.publicClient.estimateContractGas(request);
+          const hash: Hex = await this.walletClient.writeContract({ ...request, gas: (estimate * 12n) / 10n });
+          const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+          if (receipt.status !== 'success') throw new Error(`submitCheckpoint reverted: ${hash}`);
+          return hash;
+        },
+      };
+      this.checkpointSubmitter = new CheckpointSubmitter(chain, signWithDeviceKey);
+    }
+    return this.checkpointSubmitter;
+  }
+
+  // Pending = not yet anchored but still inside the contract's submission window.
+  // v1 pending entries (unsigned structs) are not compatible and are dropped.
+  private static readonly PENDING_KEY = 'pending_checkpoints_v2';
+  private static readonly UNANCHORED_KEY = 'unanchored_checkpoints_v2';
+
+  private async storePendingCheckpoint(checkpoint: LocalCheckpoint): Promise<void> {
     try {
-      const existing = await AsyncStorage.getItem('pending_checkpoints');
-      const pending: BlockchainCheckpoint[] = existing ? JSON.parse(existing) : [];
-      
+      const pending = (await this.getPendingCheckpoints()).filter((cp) => cp.merkleRoot !== checkpoint.merkleRoot);
       pending.push(checkpoint);
-      
-      // Keep only last 50 pending checkpoints
-      const trimmed = pending.slice(-50);
-      
-      await AsyncStorage.setItem('pending_checkpoints', JSON.stringify(trimmed));
+      await AsyncStorage.setItem(BlockchainServiceClass.PENDING_KEY, JSON.stringify(pending.slice(-50)));
     } catch (error) {
       console.error('Failed to store pending checkpoint:', error);
     }
   }
 
-  async getPendingCheckpoints(): Promise<BlockchainCheckpoint[]> {
+  async getPendingCheckpoints(): Promise<LocalCheckpoint[]> {
     try {
-      const data = await AsyncStorage.getItem('pending_checkpoints');
+      const data = await AsyncStorage.getItem(BlockchainServiceClass.PENDING_KEY);
       return data ? JSON.parse(data) : [];
     } catch (error) {
       console.error('Failed to get pending checkpoints:', error);
@@ -484,111 +427,58 @@ class BlockchainServiceClass {
     }
   }
 
-  /**
-   * Clear all pending checkpoints (for manual cleanup)
-   */
-  async clearAllPendingCheckpoints(): Promise<void> {
+  /** Checkpoints that missed the submission window. Still on the device; never on chain. */
+  async getUnanchoredCheckpoints(): Promise<(LocalCheckpoint & { reason: string })[]> {
     try {
-      await AsyncStorage.removeItem('pending_checkpoints');
-      console.log('✅ All pending checkpoints cleared');
-    } catch (error) {
-      console.error('Failed to clear pending checkpoints:', error);
-      throw error;
+      const data = await AsyncStorage.getItem(BlockchainServiceClass.UNANCHORED_KEY);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
     }
+  }
+
+  private async storeUnanchoredCheckpoint(checkpoint: LocalCheckpoint, reason: string): Promise<void> {
+    const existing = await this.getUnanchoredCheckpoints();
+    existing.push({ ...checkpoint, reason });
+    await AsyncStorage.setItem(BlockchainServiceClass.UNANCHORED_KEY, JSON.stringify(existing.slice(-200)));
+  }
+
+  async clearAllPendingCheckpoints(): Promise<void> {
+    await AsyncStorage.multiRemove([BlockchainServiceClass.PENDING_KEY, 'pending_checkpoints']);
+    console.log('✅ All pending checkpoints cleared');
+  }
+
+  async clearPendingCheckpoints(): Promise<void> {
+    await this.clearAllPendingCheckpoints();
   }
 
   private async removePendingCheckpoint(merkleRoot: string): Promise<void> {
     try {
-      const existing = await AsyncStorage.getItem('pending_checkpoints');
-      const pending: BlockchainCheckpoint[] = existing ? JSON.parse(existing) : [];
-      
-      const filtered = pending.filter(cp => cp.merkleRoot !== merkleRoot);
-      await AsyncStorage.setItem('pending_checkpoints', JSON.stringify(filtered));
+      const pending = await this.getPendingCheckpoints();
+      await AsyncStorage.setItem(
+        BlockchainServiceClass.PENDING_KEY,
+        JSON.stringify(pending.filter((cp) => cp.merkleRoot !== merkleRoot))
+      );
     } catch (error) {
       console.error('Failed to remove pending checkpoint:', error);
     }
   }
 
   /**
-   * Clear all pending checkpoints (for debugging)
-   */
-  async clearPendingCheckpoints(): Promise<void> {
-    try {
-      await AsyncStorage.setItem('pending_checkpoints', JSON.stringify([]));
-      console.log('All pending checkpoints cleared');
-    } catch (error) {
-      console.error('Failed to clear pending checkpoints:', error);
-    }
-  }
-
-  /**
-   * Retry submitting all pending checkpoints
+   * Retries queued checkpoints in time order. Ones past the 10-minute window
+   * cannot be anchored any more and move to the unanchored list.
    */
   async retryPendingCheckpoints(): Promise<{ submitted: number; failed: number }> {
     let submitted = 0;
     let failed = 0;
-
-    try {
-      if (!this.walletClient) {
-        console.log('No wallet available for retrying pending checkpoints');
-        return { submitted, failed };
-      }
-
-      const accounts = await this.walletClient.getAddresses();
-      if (!accounts || accounts.length === 0) {
-        console.log('No accounts available for retrying pending checkpoints');
-        return { submitted, failed };
-      }
-
-      const account = accounts[0];
-      const pendingCheckpoints = await this.getPendingCheckpoints();
-
-      console.log(`Retrying ${pendingCheckpoints.length} pending checkpoints...`);
-
-      for (const checkpoint of pendingCheckpoints) {
-        try {
-          // Debug the checkpoint format before submission
-          console.log('About to submit checkpoint:', {
-            merkleRoot: checkpoint.merkleRoot,
-            merkleRootLength: checkpoint.merkleRoot.length,
-            deviceAttestation: checkpoint.deviceAttestation,
-            attestationLength: checkpoint.deviceAttestation.length,
-            startTime: checkpoint.startTime,
-            endTime: checkpoint.endTime,
-          });
-
-          const txHash = await this.walletClient.writeContract({
-            address: CONTRACT_CONFIG.address,
-            abi: SPEED_REGISTRY_ABI,
-            functionName: 'submitCheckpoint',
-            args: [checkpoint],
-            account,
-            gas: 300000n, // Reasonable gas limit for checkpoint submission
-            gasPrice: 1000000000n, // 1 gwei - conservative gas price for Hedera
-          });
-
-          console.log('Retry: Checkpoint submitted to blockchain:', {
-            merkleRoot: checkpoint.merkleRoot.substring(0, 10) + '...',
-            txHash: txHash.substring(0, 10) + '...',
-          });
-
-          await this.removePendingCheckpoint(checkpoint.merkleRoot);
-          submitted++;
-
-        } catch (txError) {
-          console.error('Retry: Failed to submit checkpoint:', txError);
-          console.error('Failed checkpoint data:', checkpoint);
-          failed++;
-        }
-      }
-
-      console.log(`Retry completed: ${submitted} submitted, ${failed} failed`);
-      return { submitted, failed };
-
-    } catch (error) {
-      console.error('Failed to retry pending checkpoints:', error);
-      return { submitted, failed };
+    const pending = (await this.getPendingCheckpoints()).sort((a, b) => a.startTime - b.startTime);
+    for (const checkpoint of pending) {
+      const result = await this.submitCheckpoint(checkpoint);
+      if (result && result.startsWith('0x')) submitted++;
+      else failed++;
     }
+    console.log(`Retry completed: ${submitted} submitted, ${failed} not submitted`);
+    return { submitted, failed };
   }
 
   /**
@@ -617,7 +507,7 @@ class BlockchainServiceClass {
         distanceMeters: cp.distanceMeters,
         recordCount: cp.recordCount,
         deviceAddress: cp.deviceAddress,
-        deviceAttestation: cp.deviceAttestation,
+        keyHash: cp.keyHash,
       }));
 
     } catch (error) {
@@ -664,7 +554,7 @@ class BlockchainServiceClass {
         distanceMeters: checkpoint.distanceMeters,
         recordCount: checkpoint.recordCount,
         deviceAddress: checkpoint.deviceAddress,
-        deviceAttestation: checkpoint.deviceAttestation,
+        keyHash: checkpoint.keyHash,
       };
 
     } catch (error) {
@@ -719,7 +609,7 @@ class BlockchainServiceClass {
             distanceMeters: Number(cp.distanceMeters),
             recordCount: Number(cp.recordCount),
             deviceAddress: cp.deviceAddress,
-            deviceAttestation: cp.deviceAttestation
+            keyHash: cp.keyHash
           });
         }
       }

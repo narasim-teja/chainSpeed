@@ -667,16 +667,14 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                         // Clear any local session data
                         console.log('🧹 Clearing local session data...');
                         
-                        // End TEE session if active
+                        // Lock the signing key if a drive session is open
                         try {
-                          const { getTEECryptoService } = await import('../services/TEECryptoService');
-                          const teeService = getTEECryptoService();
-                          await teeService.endSession();
-                          console.log('🔒 TEE session ended');
-                        } catch (teeError) {
-                          console.log('TEE session cleanup not needed or failed:', teeError);
+                          const { endDriveSession } = await import('../services/identity/deviceRegistration');
+                          endDriveSession();
+                        } catch (sessionError) {
+                          console.log('Drive session cleanup not needed:', sessionError);
                         }
-                        
+
                         // Logout from Privy (this will redirect to login screen)
                         await logout();
                         

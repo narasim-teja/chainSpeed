@@ -9,13 +9,21 @@ import {
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { usePrivy, useEmbeddedEthereumWallet, getUserEmbeddedEthereumWallet } from '@privy-io/expo';
+import { usePrivy, useEmbeddedEthereumWallet, getUserEmbeddedEthereumWallet, useIdentityToken } from '@privy-io/expo';
 import { useRouter } from 'expo-router';
 import { getSpeedTrackingService } from '../services/SpeedTrackingService';
 import { SpeedRecord } from '../services/LocationService';
 
 import { getBlockchainService } from '../services/BlockchainService';
 import { getXPService } from '../services/XPService';
+import {
+  beginDriveSession,
+  endDriveSession,
+  getDeviceIdentity,
+  hasDriveSession,
+  isDeviceSupported,
+  registerDevice,
+} from '../services/identity/deviceRegistration';
 
 
 interface TrackingStats {
@@ -65,9 +73,11 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
   });
 
   const [recentRecords, setRecentRecords] = useState<SpeedRecord[]>([]);
-  const [isTEEAuthenticating, setIsTEEAuthenticating] = useState(false);
-  const [teeInitialized, setTeeInitialized] = useState(false);
-  const [teeAuthenticated, setTeeAuthenticated] = useState(false);
+  const { getIdentityToken } = useIdentityToken();
+  // null = not checked yet
+  const [deviceRegistered, setDeviceRegistered] = useState<boolean | null>(null);
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [isStartingDrive, setIsStartingDrive] = useState(false);
   
   // Cache for blockchain data to avoid excessive API calls
   const [blockchainDataCache, setBlockchainDataCache] = useState<{
@@ -131,6 +141,17 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
     initializeWalletProvider();
   }, [authenticated, account?.address, wallets]);
 
+  // Is this device's Secure Enclave key registered for this wallet?
+  useEffect(() => {
+    if (!account?.address) return;
+    getDeviceIdentity(account.address as `0x${string}`)
+      .then((identity) => setDeviceRegistered(identity !== null))
+      .catch((error) => {
+        console.error('Failed to read device identity:', error);
+        setDeviceRegistered(false);
+      });
+  }, [account?.address]);
+
   const updateStats = async () => {
     try {
       const trackingService = getSpeedTrackingService();
@@ -146,17 +167,12 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
       const isConnected = await blockchainService.checkConnection();
       const pendingCheckpoints = await blockchainService.getPendingCheckpoints();
 
-      // Get TEE status
-      let teeEnabled = false;
+      // Secure Enclave signing status
       let teeSessionActive = false;
       try {
-        const { getTEECryptoService } = await import('../services/TEECryptoService');
-        const teeService = getTEECryptoService();
-        const teeStatus = await teeService.getTEEStatus();
-        teeEnabled = teeStatus.keyGenerated && teeStatus.hardwareBacked;
-        teeSessionActive = teeStatus.sessionActive;
+        teeSessionActive = hasDriveSession();
       } catch {
-        // TEE not available, keep defaults
+        // Native module unavailable (e.g. Expo Go); keep defaults
       }
 
       // Get XP service status
@@ -221,7 +237,7 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
         isTracking: trackingService.getTrackingStatus(),
         blockchainConnected: isConnected,
         pendingCheckpoints: pendingCheckpoints.length,
-        teeEnabled,
+        teeEnabled: deviceRegistered === true,
         teeSessionActive,
         driveToEarnEnabled,
         pendingXP,
@@ -229,72 +245,49 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
         hasLowBalance,
       });
 
-      // Update local TEE states
-      setTeeInitialized(teeEnabled);
-      setTeeAuthenticated(teeSessionActive);
-
     } catch (error) {
       console.error('Failed to update stats:', error);
     }
   };
 
 
-  // Step 1: Initialize TEE with Face ID
-  const initializeTEE = async () => {
-    if (isTEEAuthenticating) return;
-    
-    setIsTEEAuthenticating(true);
+  // One-time: create the enclave key, have Apple attest it, register it on chain.
+  const registerThisDevice = async () => {
+    if (isRegistering || !account?.address) return;
+    if (!isDeviceSupported()) {
+      Alert.alert('Not supported', 'This device cannot create a Secure Enclave key with App Attest.');
+      return;
+    }
+    setIsRegistering(true);
     try {
-      console.log('🔐 Step 1: Initializing TEE with Face ID...');
-      const { getTEECryptoService } = await import('../services/TEECryptoService');
-      const teeService = getTEECryptoService();
-      
-      // Initialize and authenticate TEE
-      await teeService.initialize();
-      await teeService.authenticateSession();
-      
-      console.log('✅ TEE initialized and Face ID authenticated');
-      setTeeInitialized(true);
-      Alert.alert('Success', 'Face ID verified! Now you can authenticate for tracking.');
-      
-      await updateStats();
+      await registerDevice(account.address as `0x${string}`, getIdentityToken);
+      setDeviceRegistered(true);
+      Alert.alert('Device registered', 'This phone can now sign your speed checkpoints.');
     } catch (error) {
-      console.error('TEE initialization failed:', error);
-      Alert.alert('Face ID Failed', 'Face ID authentication failed. Please try again.');
+      console.error('Device registration failed:', error);
+      Alert.alert('Registration failed', error instanceof Error ? error.message : String(error));
     } finally {
-      setIsTEEAuthenticating(false);
+      setIsRegistering(false);
     }
   };
 
-  // Step 2: Authenticate for tracking
-  const authenticateForTracking = async () => {
+  // Face ID once to unlock the signing key for this drive, then start tracking.
+  const startDrive = async () => {
+    if (isStartingDrive) return;
+    setIsStartingDrive(true);
     try {
-      console.log('🔐 Step 2: Authenticating for tracking...');
-      setTeeAuthenticated(true);
-      Alert.alert('Authenticated', 'You are now authenticated! You can start tracking.');
-      await updateStats();
-    } catch (error) {
-      console.error('Authentication failed:', error);
-      Alert.alert('Error', 'Authentication failed');
-    }
-  };
-
-  // Step 3: Actually start tracking
-  const startTracking = async () => {
-    try {
-      console.log('🚀 Step 3: Starting actual tracking...');
-      const trackingService = getSpeedTrackingService();
-      const success = await trackingService.startTracking();
-      
-      if (success) {
-        Alert.alert('Success', 'Speed tracking started!');
-        await updateStats();
-      } else {
+      await beginDriveSession();
+      const success = await getSpeedTrackingService().startTracking();
+      if (!success) {
+        endDriveSession();
         Alert.alert('Error', 'Failed to start tracking. Please check permissions.');
       }
+      await updateStats();
     } catch (error) {
-      console.error('Failed to start tracking:', error);
-      Alert.alert('Error', 'Failed to start tracking');
+      console.error('Failed to start drive:', error);
+      Alert.alert('Could not start drive', error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsStartingDrive(false);
     }
   };
 
@@ -313,6 +306,9 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
       }
       
       await trackingService.stopTracking();
+      // Anchor anything still queued while the signing key is unlocked, then lock it.
+      await getBlockchainService().retryPendingCheckpoints();
+      endDriveSession();
       
       if (stats.driveToEarnEnabled) {
         Alert.alert(
@@ -432,36 +428,29 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
 
         {/* Control Buttons */}
         <View style={styles.buttonContainer}>
-          {/* Step 1: Start TEE (Face ID) */}
-          {!teeInitialized && !stats.isTracking && (
-            <TouchableOpacity 
-              style={[styles.teeButton, isTEEAuthenticating && styles.buttonDisabled]} 
-              onPress={initializeTEE}
-              disabled={isTEEAuthenticating}
+          {/* One-time device registration */}
+          {deviceRegistered === false && !stats.isTracking && (
+            <TouchableOpacity
+              style={[styles.teeButton, isRegistering && styles.buttonDisabled]}
+              onPress={registerThisDevice}
+              disabled={isRegistering}
             >
-              <Ionicons name="finger-print" size={20} color="white" style={{marginRight: 10}} />
+              <Ionicons name="hardware-chip" size={20} color="white" style={{marginRight: 10}} />
               <Text style={styles.buttonText}>
-                {isTEEAuthenticating ? 'Verifying Face ID...' : 'Start TEE (Face ID)'}
+                {isRegistering ? 'Registering device...' : 'Register this device'}
               </Text>
             </TouchableOpacity>
           )}
 
-          {/* Step 2: Authenticate */}
-          {teeInitialized && !teeAuthenticated && !stats.isTracking && (
-            <TouchableOpacity 
-              style={styles.authenticateButton} 
-              onPress={authenticateForTracking}
+          {/* Start a drive: Face ID unlocks the signing key */}
+          {deviceRegistered === true && !stats.isTracking && (
+            <TouchableOpacity
+              style={[styles.startButton, isStartingDrive && styles.buttonDisabled]}
+              onPress={startDrive}
+              disabled={isStartingDrive}
             >
-              <Ionicons name="shield-checkmark" size={20} color="white" style={{marginRight: 10}} />
-              <Text style={styles.buttonText}>Authenticate</Text>
-            </TouchableOpacity>
-          )}
-
-          {/* Step 3: Start Tracking */}
-          {teeAuthenticated && !stats.isTracking && (
-            <TouchableOpacity style={styles.startButton} onPress={startTracking}>
-              <Ionicons name="play" size={20} color="white" style={{marginRight: 10}} />
-              <Text style={styles.buttonText}>Start Tracking</Text>
+              <Ionicons name="finger-print" size={20} color="white" style={{marginRight: 10}} />
+              <Text style={styles.buttonText}>{isStartingDrive ? 'Starting...' : 'Start Drive (Face ID)'}</Text>
             </TouchableOpacity>
           )}
 
@@ -478,8 +467,8 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
         {!stats.isTracking && (
           <View style={styles.tipsSection}>
             <Text style={styles.tipTitle}>💡 Quick Tips</Text>
-            <Text style={styles.tipText}>• Start with &quot;Start TEE (Face ID)&quot; to verify yourself</Text>
-            <Text style={styles.tipText}>• Then &quot;Authenticate&quot; and &quot;Start Tracking&quot;</Text>
+            <Text style={styles.tipText}>• Register this device once: Apple attests its signing key</Text>
+            <Text style={styles.tipText}>• Each drive starts with one Face ID check</Text>
             <Text style={styles.tipText}>• Drive safely to earn rewards with secure tracking</Text>
           </View>
         )}
