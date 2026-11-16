@@ -71,10 +71,8 @@ class SpeedTrackingServiceClass {
     try {
       // Initialize services if needed
       const { getXPService } = await import('./XPService');
-      const { getDataAggregationService } = await import('./DataAggregationService');
       
       const xpService = getXPService();
-      const aggregationService = getDataAggregationService();
       
       // Initialize services if not already done
       if (!xpService.isDriveToEarnEnabled()) {
@@ -88,16 +86,6 @@ class SpeedTrackingServiceClass {
           record.distance,
           location.coords.latitude,
           location.coords.longitude
-        );
-      }
-      
-      // Process data aggregation (always, for monetization)
-      if (record.speed && record.distance) {
-        await aggregationService.processSpeedRecord(
-          location.coords.latitude,
-          location.coords.longitude,
-          record.speed,
-          record.distance
         );
       }
       

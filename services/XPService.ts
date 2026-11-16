@@ -1,5 +1,4 @@
 import { getBlockchainService } from './BlockchainService';
-import { getDataAggregationService } from './DataAggregationService';
 
 /**
  * Service for managing XP rewards and drive-to-earn functionality
@@ -154,10 +153,6 @@ class XPService {
         console.log(`⚠️ No XP earned - driving ${speed} mph (over ${SAFE_SPEED_LIMIT} mph limit)`);
       }
 
-      // Also process for data aggregation
-      const aggregationService = getDataAggregationService();
-      await aggregationService.processSpeedRecord(latitude, longitude, speed, distance);
-      
       return xpEarned;
       
     } catch (error) {
