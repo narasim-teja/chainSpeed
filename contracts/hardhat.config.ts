@@ -35,6 +35,9 @@ const config: HardhatUserConfig & { etherscan?: any } = {
     // Local development
     hardhat: {
       chainId: 31337,
+      // Match Hedera's EVM: no secp256r1 precompile at 0x100 (newer hardforks add one),
+      // so local gas numbers and behavior reflect what Hedera actually does.
+      hardfork: "cancun",
     },
   },
   etherscan: {

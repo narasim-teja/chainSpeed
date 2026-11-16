@@ -15,15 +15,23 @@ async function main() {
   // Get the contract factory
   const SpeedRegistry = await hre.ethers.getContractFactory("SpeedRegistry", deployer);
   
-  // Deploy the contract
+  // v2 needs the registrar: the account the device registrar server (server/) signs with.
+  // Use a dedicated key; it can register and revoke device keys, nothing else.
+  const registrar = process.env.REGISTRAR_ADDRESS;
+  if (!registrar || !hre.ethers.isAddress(registrar)) {
+    throw new Error("Set REGISTRAR_ADDRESS to the registrar account's address");
+  }
+  console.log(`Registrar: ${registrar}`);
+
   console.log("Deploying contract...");
-  const speedRegistry = await SpeedRegistry.deploy();
+  const speedRegistry = await SpeedRegistry.deploy(registrar);
   
   // Wait for deployment to be mined
   await speedRegistry.waitForDeployment();
   
   const address = await speedRegistry.getAddress();
   console.log(`SpeedRegistry deployed to: ${address}`);
+  console.log(`Set EXPO_PUBLIC_SPEED_REGISTRY_ADDRESS (app .env) and REGISTRY_ADDRESS (server/.env) to ${address}`);
   
   // Get deployment transaction details
   const deploymentTx = speedRegistry.deploymentTransaction();
