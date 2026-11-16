@@ -15,7 +15,11 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.narasimha.chainspeed",
+      "entitlements": {
+        "com.apple.developer.devicecheck.appattest-environment": "development"
+      },
       "infoPlist": {
+        "NSFaceIDUsageDescription": "ChainSpeed uses Face ID once at the start of each drive to unlock the key that signs your speed records.",
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         },
@@ -42,8 +46,8 @@
       ]
     },
     "extra": {
-      "privyAppId": "cmedwf4cd001vk10c4a8imp1r",
-      "privyClientId": "client-WY6PoafcGy63fWj1FvUW979xKhxuZKp2KfErbdLHcfgDZ"
+      "privyAppId": "cmwjvk4g4005x0hli88aaghet",
+      "privyClientId": "client-WY6fk6r7NX61xTAfnGVUvQJPucPDEAp1E6jmH7mHa5Wak"
     },
     "plugins": [
       "expo-router",
