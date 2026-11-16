@@ -116,6 +116,7 @@ contract SpeedRegistry {
     error FutureWindow();
     error StaleCheckpoint();
     error ImpossibleDistance();
+    error InconsistentSpeeds();
     error InvalidSignature();
     error CheckpointNotFound();
 
@@ -204,6 +205,7 @@ contract SpeedRegistry {
         if (block.timestamp > cp.endTime + MAX_SUBMIT_DELAY) revert StaleCheckpoint();
 
         // Physical plausibility.
+        if (cp.minSpeed > cp.avgSpeed || cp.avgSpeed > cp.maxSpeed) revert InconsistentSpeeds();
         if (uint256(cp.distanceMeters) > uint256(cp.endTime - cp.startTime) * MAX_METERS_PER_SECOND) {
             revert ImpossibleDistance();
         }

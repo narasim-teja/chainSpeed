@@ -1,6 +1,6 @@
 import { createPublicClient, createWalletClient, http, custom, defineChain, type Address, type Hex } from 'viem';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { OutOfOrderCheckpointError, type LocalCheckpoint } from './identity/checkpointInput';
+import { InvalidCheckpointError, OutOfOrderCheckpointError, type LocalCheckpoint } from './identity/checkpointInput';
 import { toLeafValues } from './identity/recordTree';
 import type { MerkleProof } from './MerkleService';
 import { CheckpointSubmitter, StaleCheckpointError, type CheckpointChain } from './identity/checkpointSubmitter';
@@ -348,7 +348,11 @@ class BlockchainServiceClass {
       console.log('Signed checkpoint anchored:', { root: local.merkleRoot.substring(0, 10) + '...', txHash });
       return txHash;
     } catch (error) {
-      if (error instanceof StaleCheckpointError || error instanceof OutOfOrderCheckpointError) {
+      if (
+        error instanceof StaleCheckpointError ||
+        error instanceof OutOfOrderCheckpointError ||
+        error instanceof InvalidCheckpointError
+      ) {
         await this.removePendingCheckpoint(local.merkleRoot);
         await this.storeUnanchoredCheckpoint(local, error.message);
         return null;

@@ -50,6 +50,11 @@ export const SPEED_REGISTRY_ABI = [
   },
   {
     "inputs": [],
+    "name": "InconsistentSpeeds",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "InvalidMerkleRoot",
     "type": "error"
   },

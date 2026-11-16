@@ -31,10 +31,27 @@ export class OutOfOrderCheckpointError extends Error {
   }
 }
 
+/** The checkpoint's values are not physically plausible or do not fit the contract's types (F15). */
+export class InvalidCheckpointError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidCheckpointError';
+  }
+}
+
+/** Above this, a "speed" is a GPS glitch, not driving. */
+export const MAX_PLAUSIBLE_MPH = 200;
+
 /** Back-to-back checkpoints can overlap by up to a second from millisecond → second rounding. */
 const MAX_ROUNDING_OVERLAP_SECONDS = 1n;
 
-const clampUint = (value: number, max: number) => Math.min(max, Math.max(0, Math.round(value)));
+/** Rounds to an unsigned integer, or throws: never clamps an implausible value into range (F15). */
+function checkedUint(value: number, max: number, name: string): number {
+  if (!Number.isFinite(value)) throw new InvalidCheckpointError(`${name} is not a finite number`);
+  const rounded = Math.round(value);
+  if (rounded < 0 || rounded > max) throw new InvalidCheckpointError(`${name} ${value} is outside 0-${max}`);
+  return rounded;
+}
 
 /** The window exactly as recorded, in seconds. */
 export function recordedWindow(local: LocalCheckpoint): { startTime: bigint; endTime: bigint } {
@@ -51,9 +68,9 @@ export function recordedWindow(local: LocalCheckpoint): { startTime: bigint; end
  * with the previous checkpoint (and to give a single-instant window a one-second length).
  * A checkpoint older than the chain head is rejected rather than re-timed.
  *
- * Note: speeds and distance are still clamped to their integer ranges here. Rejecting
- * implausible values instead of clamping is F15, fixed in Tier 2; the contract already
- * rejects physically impossible distances.
+ * Values are validated, never clamped: a 300 mph glitch or a NaN distance throws
+ * InvalidCheckpointError (F15). The contract separately bounds distance by the window's
+ * length and requires min <= avg <= max.
  */
 export function toCheckpointInput(local: LocalCheckpoint, position: ChainPosition): CheckpointInput {
   const merkleRoot = (local.merkleRoot.startsWith('0x') ? local.merkleRoot : `0x${local.merkleRoot}`) as Hex;
@@ -76,10 +93,10 @@ export function toCheckpointInput(local: LocalCheckpoint, position: ChainPositio
     merkleRoot,
     startTime,
     endTime,
-    avgSpeed: clampUint(local.avgSpeed, 255),
-    maxSpeed: clampUint(local.maxSpeed, 255),
-    minSpeed: clampUint(local.minSpeed, 255),
-    distanceMeters: clampUint(local.distanceMeters, 65_535),
-    recordCount: clampUint(local.recordCount, 65_535),
+    avgSpeed: checkedUint(local.avgSpeed, MAX_PLAUSIBLE_MPH, 'avgSpeed'),
+    maxSpeed: checkedUint(local.maxSpeed, MAX_PLAUSIBLE_MPH, 'maxSpeed'),
+    minSpeed: checkedUint(local.minSpeed, MAX_PLAUSIBLE_MPH, 'minSpeed'),
+    distanceMeters: checkedUint(local.distanceMeters, 65_535, 'distanceMeters'),
+    recordCount: checkedUint(local.recordCount, 65_535, 'recordCount'),
   };
 }

@@ -4,7 +4,7 @@ import { p256 } from '@noble/curves/p256';
 import { bytesToHex } from 'viem';
 import { checkpointDigest } from './checkpointDigest';
 import { derSignatureToRS } from './signature';
-import { OutOfOrderCheckpointError, toCheckpointInput } from './checkpointInput';
+import { InvalidCheckpointError, OutOfOrderCheckpointError, toCheckpointInput } from './checkpointInput';
 
 const N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
 
@@ -90,6 +90,17 @@ describe('toCheckpointInput', () => {
   test('allows at most one second of rounding overlap', () => {
     const twoSecondsEarly = { ...base, startTime: 998_000, endTime: 1_028_000 };
     expect(() => toCheckpointInput(twoSecondsEarly, position)).toThrow(OutOfOrderCheckpointError);
+  });
+
+  test('F15: rejects implausible or invalid values instead of clamping them', () => {
+    for (const bad of [
+      { avgSpeed: 300 }, // the review's 300 mph reading, previously clamped to 255
+      { maxSpeed: Number.NaN },
+      { distanceMeters: 70_000 }, // previously clamped to 65535, "40.7 miles"
+      { minSpeed: -1 },
+    ]) {
+      expect(() => toCheckpointInput({ ...base, ...bad }, position)).toThrow(InvalidCheckpointError);
+    }
   });
 
   test('rejects a root that is not 32 bytes', () => {

@@ -244,7 +244,7 @@ describe("SpeedRegistry v2", function () {
     });
 
     it("F2: changing any field after signing invalidates the signature", async function () {
-      const cp = await nextInput({ avgSpeed: 80 });
+      const cp = await nextInput({ avgSpeed: 80, maxSpeed: 90 });
       const { r, s } = await sign(registry, wallet.address, cp, key);
       const forged = { ...cp, avgSpeed: 60 }; // claim a lower speed than was signed
       await expect(registry.submitCheckpoint(wallet.address, forged, r, s)).to.be.revertedWithCustomError(
@@ -351,6 +351,7 @@ describe("SpeedRegistry v2", function () {
         startTime: now - 30n,
         endTime: now,
         avgSpeed: 90,
+        maxSpeed: 95,
       };
       await submit(forged, attackerKey, other.address);
 
@@ -365,6 +366,11 @@ describe("SpeedRegistry v2", function () {
       await expect(submit(await nextInput({ merkleRoot: first.merkleRoot })))
         .to.be.revertedWithCustomError(registry, "DuplicateRoot")
         .withArgs(first.merkleRoot);
+    });
+
+    it("F15: rejects speed stats that are internally inconsistent", async function () {
+      const cp = await nextInput({ minSpeed: 20, avgSpeed: 70, maxSpeed: 40 }); // average above the maximum
+      await expect(submit(cp)).to.be.revertedWithCustomError(registry, "InconsistentSpeeds");
     });
 
     it("rejects checkpoints from a revoked key", async function () {
