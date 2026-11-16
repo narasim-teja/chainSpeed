@@ -3,6 +3,7 @@ import { SpeedRecord } from './LocationService';
 import { getCryptoService, SignedData } from './CryptoService';
 import { getBlockchainService } from './BlockchainService';
 import { getSecureJSON, setSecureJSON } from './storage/secureStorage';
+import { CHECKPOINT_RETENTION_MS, staleBundleKeys } from './storage/retention';
 import { buildRecordTree, recordLeaf, recordProof, verifyRecordProof, type LeafRecord } from './identity/recordTree';
 
 /** Inclusion proof for one record, verifiable on chain with SpeedRegistry.verifyRecord. */
@@ -198,9 +199,9 @@ class MerkleServiceClass {
       const checkpoints: CheckpointData[] = (await getSecureJSON<CheckpointData[]>(CHECKPOINT_STORAGE_KEY)) ?? [];
       checkpoints.push(checkpoint);
 
-      // Keep only last 24 hours of checkpoints
-      const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
-      const filteredCheckpoints = checkpoints.filter(c => c.endTime > oneDayAgo);
+      // Keep checkpoints (and the records behind their proofs) for the retention period (F20)
+      const cutoff = Date.now() - CHECKPOINT_RETENTION_MS;
+      const filteredCheckpoints = checkpoints.filter(c => c.endTime > cutoff);
 
       await setSecureJSON(CHECKPOINT_STORAGE_KEY, filteredCheckpoints);
 
@@ -211,9 +212,17 @@ class MerkleServiceClass {
       await AsyncStorage.setItem(treeKey, JSON.stringify(merkleTree));
       await setSecureJSON(recordsKey, records); // raw GPS: encrypted at rest
 
+      // Delete bundles whose checkpoint aged out, and any orphans left by older versions
+      await this.pruneBundles(new Set(filteredCheckpoints.map((c) => c.merkleRoot)));
+
     } catch (error) {
       console.error('Failed to store checkpoint:', error);
     }
+  }
+
+  private async pruneBundles(retainedRoots: Set<string>): Promise<void> {
+    const stale = staleBundleKeys(await AsyncStorage.getAllKeys(), retainedRoots);
+    if (stale.length > 0) await AsyncStorage.multiRemove(stale);
   }
 
   public async getCheckpoints(startTime?: number, endTime?: number): Promise<CheckpointData[]> {
@@ -241,6 +250,7 @@ class MerkleServiceClass {
   public async clearAllCheckpoints(): Promise<void> {
     try {
       await AsyncStorage.removeItem(CHECKPOINT_STORAGE_KEY);
+      await this.pruneBundles(new Set()); // the records behind them too
       console.log('✅ All local checkpoints cleared');
     } catch (error) {
       console.error('Failed to clear checkpoints:', error);
