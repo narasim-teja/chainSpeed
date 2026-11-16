@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SpeedRecord } from './LocationService';
 import { getCryptoService, SignedData } from './CryptoService';
 import { getBlockchainService } from './BlockchainService';
+import { getSecureJSON, setSecureJSON } from './storage/secureStorage';
 import { buildRecordTree, recordLeaf, recordProof, verifyRecordProof, type LeafRecord } from './identity/recordTree';
 
 /** Inclusion proof for one record, verifiable on chain with SpeedRegistry.verifyRecord. */
@@ -194,22 +195,21 @@ class MerkleServiceClass {
   ): Promise<void> {
     try {
       // Store checkpoint metadata
-      const existingCheckpoints = await AsyncStorage.getItem(CHECKPOINT_STORAGE_KEY);
-      const checkpoints: CheckpointData[] = existingCheckpoints ? JSON.parse(existingCheckpoints) : [];
+      const checkpoints: CheckpointData[] = (await getSecureJSON<CheckpointData[]>(CHECKPOINT_STORAGE_KEY)) ?? [];
       checkpoints.push(checkpoint);
 
       // Keep only last 24 hours of checkpoints
       const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
       const filteredCheckpoints = checkpoints.filter(c => c.endTime > oneDayAgo);
 
-      await AsyncStorage.setItem(CHECKPOINT_STORAGE_KEY, JSON.stringify(filteredCheckpoints));
+      await setSecureJSON(CHECKPOINT_STORAGE_KEY, filteredCheckpoints);
 
       // Store full tree and records for proof generation
       const treeKey = `merkle_tree_${checkpoint.merkleRoot}`;
       const recordsKey = `records_${checkpoint.merkleRoot}`;
 
       await AsyncStorage.setItem(treeKey, JSON.stringify(merkleTree));
-      await AsyncStorage.setItem(recordsKey, JSON.stringify(records));
+      await setSecureJSON(recordsKey, records); // raw GPS: encrypted at rest
 
     } catch (error) {
       console.error('Failed to store checkpoint:', error);
@@ -218,10 +218,8 @@ class MerkleServiceClass {
 
   public async getCheckpoints(startTime?: number, endTime?: number): Promise<CheckpointData[]> {
     try {
-      const data = await AsyncStorage.getItem(CHECKPOINT_STORAGE_KEY);
-      if (!data) return [];
-
-      const checkpoints: CheckpointData[] = JSON.parse(data);
+      const checkpoints = await getSecureJSON<CheckpointData[]>(CHECKPOINT_STORAGE_KEY);
+      if (!checkpoints) return [];
       
       if (startTime || endTime) {
         return checkpoints.filter(checkpoint => 
@@ -253,14 +251,13 @@ class MerkleServiceClass {
   public async generateMerkleProof(recordTimestamp: number, merkleRoot: string): Promise<MerkleProof | null> {
     try {
       const treeData = await AsyncStorage.getItem(`merkle_tree_${merkleRoot}`);
-      const recordsData = await AsyncStorage.getItem(`records_${merkleRoot}`);
-      if (!treeData || !recordsData) {
+      const records = await getSecureJSON<SpeedRecord[]>(`records_${merkleRoot}`);
+      if (!treeData || !records) {
         console.error('Tree or records not found for root:', merkleRoot);
         return null;
       }
       const tree = JSON.parse(treeData);
       if (!Array.isArray(tree)) return null; // a tree from before the standard-tree format
-      const records: SpeedRecord[] = JSON.parse(recordsData);
 
       const target = records.find((r) => Math.abs(r.timestamp - recordTimestamp) < 1000);
       if (!target || !target.salt) {

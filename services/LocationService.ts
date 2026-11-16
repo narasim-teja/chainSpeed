@@ -2,6 +2,7 @@ import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { Accelerometer, Gyroscope, Magnetometer } from 'expo-sensors';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getSecureJSON, setSecureJSON } from './storage/secureStorage';
 import * as Crypto from 'expo-crypto';
 
 export interface SpeedRecord {
@@ -327,10 +328,7 @@ class LocationServiceClass {
       this.lastKnownSpeed = speed;
       
       // Store last known speed for UI updates
-      await AsyncStorage.setItem('last_known_speed', JSON.stringify({
-        speed: speed,
-        timestamp: Date.now()
-      }));
+      await setSecureJSON('last_known_speed', { speed, timestamp: Date.now() });
 
     } catch (error) {
       console.error('Failed to process location update:', error);
@@ -339,8 +337,7 @@ class LocationServiceClass {
 
   private async storeRecord(record: SpeedRecord): Promise<void> {
     try {
-      const existingData = await AsyncStorage.getItem(STORAGE_KEY);
-      const records: SpeedRecord[] = existingData ? JSON.parse(existingData) : [];
+      const records: SpeedRecord[] = (await getSecureJSON<SpeedRecord[]>(STORAGE_KEY)) ?? [];
       
       records.push(record);
 
@@ -352,7 +349,7 @@ class LocationServiceClass {
       const maxRecords = 2880; // 24 hours * 60 minutes * 2 (every 30 seconds average)
       const trimmedRecords = filteredRecords.slice(-maxRecords);
 
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(trimmedRecords));
+      await setSecureJSON(STORAGE_KEY, trimmedRecords);
       
     } catch (error) {
       console.error('Failed to store record:', error);
@@ -361,10 +358,8 @@ class LocationServiceClass {
 
   async getRecords(startTime?: number, endTime?: number): Promise<SpeedRecord[]> {
     try {
-      const data = await AsyncStorage.getItem(STORAGE_KEY);
-      if (!data) return [];
-
-      const records: SpeedRecord[] = JSON.parse(data);
+      const records = await getSecureJSON<SpeedRecord[]>(STORAGE_KEY);
+      if (!records) return [];
       
       if (startTime || endTime) {
         return records.filter(record => 
@@ -386,9 +381,8 @@ class LocationServiceClass {
 
   async getLastKnownSpeed(): Promise<number> {
     try {
-      const data = await AsyncStorage.getItem('last_known_speed');
-      if (data) {
-        const parsed = JSON.parse(data);
+      const parsed = await getSecureJSON<{ speed: number; timestamp: number }>('last_known_speed');
+      if (parsed) {
         // If the last update was more than 5 seconds ago, assume stopped
         if (Date.now() - parsed.timestamp > 5000) {
           return 0;

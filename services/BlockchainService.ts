@@ -2,6 +2,7 @@ import { createPublicClient, createWalletClient, http, custom, defineChain, type
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { InvalidCheckpointError, OutOfOrderCheckpointError, type LocalCheckpoint } from './identity/checkpointInput';
 import { toLeafValues } from './identity/recordTree';
+import { getSecureJSON, setSecureJSON } from './storage/secureStorage';
 import type { MerkleProof } from './MerkleService';
 import { CheckpointSubmitter, StaleCheckpointError, type CheckpointChain } from './identity/checkpointSubmitter';
 import { hasDriveSession, signWithDeviceKey } from './identity/deviceRegistration';
@@ -417,7 +418,7 @@ class BlockchainServiceClass {
     try {
       const pending = (await this.getPendingCheckpoints()).filter((cp) => cp.merkleRoot !== checkpoint.merkleRoot);
       pending.push(checkpoint);
-      await AsyncStorage.setItem(BlockchainServiceClass.PENDING_KEY, JSON.stringify(pending.slice(-50)));
+      await setSecureJSON(BlockchainServiceClass.PENDING_KEY, pending.slice(-50));
     } catch (error) {
       console.error('Failed to store pending checkpoint:', error);
     }
@@ -425,8 +426,7 @@ class BlockchainServiceClass {
 
   async getPendingCheckpoints(): Promise<LocalCheckpoint[]> {
     try {
-      const data = await AsyncStorage.getItem(BlockchainServiceClass.PENDING_KEY);
-      return data ? JSON.parse(data) : [];
+      return (await getSecureJSON<LocalCheckpoint[]>(BlockchainServiceClass.PENDING_KEY)) ?? [];
     } catch (error) {
       console.error('Failed to get pending checkpoints:', error);
       return [];
@@ -436,8 +436,7 @@ class BlockchainServiceClass {
   /** Checkpoints that missed the submission window. Still on the device; never on chain. */
   async getUnanchoredCheckpoints(): Promise<(LocalCheckpoint & { reason: string })[]> {
     try {
-      const data = await AsyncStorage.getItem(BlockchainServiceClass.UNANCHORED_KEY);
-      return data ? JSON.parse(data) : [];
+      return (await getSecureJSON<(LocalCheckpoint & { reason: string })[]>(BlockchainServiceClass.UNANCHORED_KEY)) ?? [];
     } catch {
       return [];
     }
@@ -446,7 +445,7 @@ class BlockchainServiceClass {
   private async storeUnanchoredCheckpoint(checkpoint: LocalCheckpoint, reason: string): Promise<void> {
     const existing = await this.getUnanchoredCheckpoints();
     existing.push({ ...checkpoint, reason });
-    await AsyncStorage.setItem(BlockchainServiceClass.UNANCHORED_KEY, JSON.stringify(existing.slice(-200)));
+    await setSecureJSON(BlockchainServiceClass.UNANCHORED_KEY, existing.slice(-200));
   }
 
   async clearAllPendingCheckpoints(): Promise<void> {
@@ -461,9 +460,9 @@ class BlockchainServiceClass {
   private async removePendingCheckpoint(merkleRoot: string): Promise<void> {
     try {
       const pending = await this.getPendingCheckpoints();
-      await AsyncStorage.setItem(
+      await setSecureJSON(
         BlockchainServiceClass.PENDING_KEY,
-        JSON.stringify(pending.filter((cp) => cp.merkleRoot !== merkleRoot))
+        pending.filter((cp) => cp.merkleRoot !== merkleRoot)
       );
     } catch (error) {
       console.error('Failed to remove pending checkpoint:', error);
