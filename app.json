@@ -21,7 +21,8 @@
       "infoPlist": {
         "NSFaceIDUsageDescription": "ChainSpeed uses Face ID once at the start of each drive to unlock the key that signs your speed records.",
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true
         },
         "NSLocationAlwaysAndWhenInUseUsageDescription": "ChainSpeed needs location access to record your driving speed for legal protection against false speeding tickets.",
         "NSLocationWhenInUseUsageDescription": "ChainSpeed needs location access to record your driving speed for legal protection against false speeding tickets.",
