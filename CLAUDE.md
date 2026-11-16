@@ -24,14 +24,25 @@ bun run android       # Run on Android simulator/device
 **Code Quality:**
 ```bash
 bun run lint          # Run ESLint
-bunx tsc --noEmit     # Typecheck (errors under contracts/test are mocha globals, not app errors)
+bunx tsc --noEmit     # Typecheck the app (contracts/ and server/ have their own tsconfig)
+bun test services/identity  # App-side signing tests
 ```
 
 **Contracts** (in `contracts/`, also bun):
 ```bash
 bun install
 bunx hardhat test
+bun scripts/export-abi.ts   # regenerate constants/SpeedRegistryAbi.ts after contract changes
 ```
+
+**Device registrar** (in `server/`, Bun + Hono):
+```bash
+bun install
+bun test
+bun run dev
+```
+
+**Device identity (v2):** checkpoints are signed by a Secure Enclave key (`modules/secure-enclave`, Swift) registered via App Attest by the server. See `docs/identity-design.md`. The native module only works on a physical iPhone.
 
 **Build Tools:**
 - Uses Metro bundler with custom configuration for jose package
