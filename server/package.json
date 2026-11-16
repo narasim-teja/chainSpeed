@@ -1,0 +1,24 @@
+{
+  "name": "server",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "~5.8.3"
+  },
+  "dependencies": {
+    "@noble/curves": "^1",
+    "@peculiar/x509": "^3.1.0",
+    "@privy-io/node": "^0.40.0",
+    "cbor-x": "^1.6.9",
+    "hono": "^4.13.19",
+    "reflect-metadata": "^0.2.2",
+    "viem": "^2.57.20"
+  }
+}
