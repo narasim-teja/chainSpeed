@@ -1,5 +1,7 @@
 # ChainSpeed MVP Implementation Plan (24 Hours)
 
+> **Status note (November 2026):** This is the plan written at the start of the hackathon, not a description of what shipped. Gasless transactions, encrypted local storage, proof verification and legal document generation were not implemented, and the software "attestation" described here does not attest to anything. See the [README](../README.md#status-at-a-glance) for the current state.
+
 ## Architecture Adaptations for MVP
 
 ### 1. Authentication & Wallet System

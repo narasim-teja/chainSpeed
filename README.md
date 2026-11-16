@@ -1,74 +1,72 @@
-# 🚗 ChainSpeed - Secure Drive-to-Earn with TEE Technology
+# ChainSpeed
 
-> **Revolutionary mobile app that uses hardware-backed TEE security to track driving speed, rewards safe driving behavior, and generates court-admissible evidence for legal protection.**
+> **Hackathon prototype (August 2025).** ChainSpeed set out to explore whether a phone could produce tamper-evident driving-speed records, anchor them on chain, and reward safe driving. It was an ambitious build for the time available, and **several security properties described in earlier versions of this README were never implemented.** The current state is described honestly below. Do not use this app as evidence or as a source of truth for anything.
 
+## Status at a glance
 
-## 🌟 Overview
+An independent security review in November 2026 found that the trust model is not yet real. The table below separates what works from what is simulated or missing.
 
-ChainSpeed combines iOS Secure Enclave TEE technology with multi-chain blockchain infrastructure to create the world's first legally-admissible speed tracking system that rewards safe driving. Built during a hackathon, this app addresses three major markets: the $6B annual speeding ticket industry, the $200B insurance data market, and the growing drive-to-earn ecosystem.
+| Area | What works today | What is simulated or missing |
+| --- | --- | --- |
+| Speed tracking | GPS + motion sensors sampled every second; records batched into 30-second checkpoints | Timestamps come from the device clock and can be backdated |
+| "Secure Enclave" signing | UI flow, Face ID prompt (once per 30-minute session) | **No Secure Enclave key is generated.** `TEECryptoService` stores a placeholder string in the Keychain and produces SHA-256 hashes of known values. The "public key" is identical on every install. These are not signatures. |
+| Device attestation | — | No App Attest / DeviceCheck, no key registration, no binding between a device key and a user |
+| On-chain checkpoints (Hedera testnet) | Merkle roots and summary stats are submitted to `SpeedRegistry` | Checkpoints are unsigned, caller-supplied data; any caller can overwrite the record for a given root |
+| Merkle proofs | Trees are built on device | The app hashes with SHA-256 and the contract verifies with keccak256, so app-generated proofs cannot verify on chain |
+| XP rewards | `XPRewards` contract computes XP from submitted checkpoints | XP inputs are unverified client data; "gift card" codes are mock strings with no fulfillment |
+| Multi-chain | Contracts were also deployed to Zircuit testnet | The app only talks to Hedera; the Zircuit deployment is not reachable from the app |
+| Gas | Privy embedded wallets | Not gasless: the user's wallet pays gas (testnet HBAR from the faucet) |
+| Privacy | Raw data stays on device | Records are stored as plaintext JSON with precise GPS coordinates; city-level aggregation is a stub |
+| Legal evidence | — | Not court-admissible. There is no trusted time, signer identity, attestation, or verifiable inclusion proof, and local records are deleted after 24 hours |
 
-### 🎯 Key Features
+Fixes for the core issues are in progress.
 
-- **🔐 Hardware-Backed Security**: Real iOS Secure Enclave integration for tamper-proof speed records
-- **⚖️ Legal Protection**: Generate court-admissible evidence against false speeding tickets
-- **💰 Drive-to-Earn**: Earn XP for safe driving, redeem for real gift cards (Target, Netflix)
-- **🔗 Multi-Chain**: Hedera for legal records, Zircuit for rewards
-- **📱 Seamless UX**: Privy embedded wallets with gasless transactions
-- **📊 Privacy-First**: Anonymous data aggregation for traffic insights
+## Original idea
 
-## 🏗️ Architecture
+Drivers often have no independent record of their own speed. ChainSpeed's goal was:
 
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   React Native  │───▶│  Privy Wallet    │───▶│ Multi-Chain     │
-│   + TEE Security│    │  Gasless Txns    │    │ Deployment      │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-         │                        │                        │
-         ▼                        ▼                        ▼
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  iOS Secure     │    │  Merkle Trees    │    │  Legal Proof    │
-│  Enclave        │    │  30s Checkpoints │    │  Generation     │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-```
+1. Record speed on the phone, signed by a hardware-protected key the user cannot extract.
+2. Commit batches of records to a public chain so they cannot be quietly changed later.
+3. Let the driver reveal a specific window (with a Merkle proof) when they need to, without exposing their whole history.
+4. Reward safe driving with XP, and use anonymized city-level data to fund those rewards.
 
-## 📋 Smart Contract Deployments
+Steps 1 and 3 are the hard parts, and they are the ones that are not yet real. Getting them right needs a genuine Secure Enclave P-256 key, Apple App Attest, server-issued freshness nonces, key registration bound to the user, signed checkpoints verified on chain or by a server, and one consistent hashing scheme between client and contract.
 
-### Hedera Testnet
+## Smart contract deployments (testnets)
+
+### Hedera Testnet (used by the app)
+
 - **SpeedRegistry**: [`0xBB8647F3eCa9fb1f2eb049B07697Ad02f8720ac8`](https://hashscan.io/testnet/contract/0xBB8647F3eCa9fb1f2eb049B07697Ad02f8720ac8)
 - **XPRewards**: [`0x7224Cf802c4e6bDE9e67C8Eec2673dB85B0B7816`](https://hashscan.io/testnet/contract/0x7224Cf802c4e6bDE9e67C8Eec2673dB85B0B7816)
 
-### Zircuit Testnet
+### Zircuit Testnet (deployed, not wired into the app)
+
 - **SpeedRegistry**: [`0xC1768e08130BA10305064DbA76C57E890B270b3F`](https://explorer.testnet.zircuit.com/address/0xC1768e08130BA10305064DbA76C57E890B270b3F)
 - **XPRewards**: [`0xBB8647F3eCa9fb1f2eb049B07697Ad02f8720ac8`](https://explorer.testnet.zircuit.com/address/0xBB8647F3eCa9fb1f2eb049B07697Ad02f8720ac8)
 
-## 🚀 Quick Start
+These contracts match the security limitations described above.
+
+## Quick start
 
 ### Prerequisites
 
 - Node.js 18+
-- iOS device with Face ID/Touch ID (for TEE features)
-- Expo CLI or Expo Go app
+- An iOS device for the full flow (the app falls back to software hashing on simulators)
+- Expo CLI
 
-### Installation
+### Install and run
 
 ```bash
-# Clone the repository
 git clone https://github.com/narasim-teja/chainSpeed.git
 cd chainSpeed
-
-# Install dependencies
 yarn install
-
-# Start the development server
-yarn start
-
-# Run on iOS
-yarn ios
+yarn start   # dev server
+yarn ios     # run on iOS
 ```
 
-### Environment Setup
+### Configuration
 
-Create your Privy account and update `app.json`:
+The app reads its Privy app ID and client ID from `app.json`. To run against your own Privy app, replace them:
 
 ```json
 {
@@ -81,152 +79,50 @@ Create your Privy account and update `app.json`:
 }
 ```
 
-## 💡 How It Works
+## How it works today
 
-### 1. **TEE Security Layer**
-```typescript
-// Real iOS Secure Enclave integration
-const teeService = getTEECryptoService();
-await teeService.initialize(); // Generate hardware keys
-await teeService.authenticateSession(); // Face ID auth
-const signature = await teeService.signSpeedData(speedRecord); // Hardware signing
-```
+1. **Login:** email login through Privy, which creates an embedded wallet.
+2. **Tracking:** `LocationService` samples GPS and motion sensors every second. Each record is "signed" by `TEECryptoService` (in reality a SHA-256 hash, see the status table) and chained to the previous record's hash in memory.
+3. **Checkpoints:** every 30 seconds `MerkleService` builds a SHA-256 Merkle tree over the records, and `BlockchainService` submits the root and summary stats (average/max/min speed, distance, record count) to `SpeedRegistry` on Hedera testnet.
+4. **XP:** `XPRewards` awards 1 XP per mile for checkpoints with average speed at or under 75 mph. XP can be "redeemed" for mock gift-card codes.
 
-### 2. **Speed Tracking**
-- GPS + accelerometer data collected every second
-- Each record signed by Secure Enclave with Face ID protection
-- 30-second Merkle tree checkpoints for efficient verification
-
-### 3. **Multi-Chain Deployment**
-- **Hedera**: Stores legal speed checkpoints (low cost, enterprise security)
-- **Zircuit**: Processes XP rewards (enhanced security for user assets)
-
-### 4. **Drive-to-Earn Mechanics**
-- **1 XP per safe mile** (under 75 mph speed limit)
-- **Streak bonuses** for consecutive safe driving days
-- **Real gift cards** (Target, Netflix) redeemable with XP
-
-## 🔧 Key Technologies
-
-### Mobile Stack
-- **React Native + Expo**: Cross-platform mobile development
-- **TypeScript**: Type-safe development
-- **iOS Secure Enclave**: Hardware-backed cryptographic signing
-- **Multi-sensor fusion**: GPS, accelerometer, gyroscope validation
-
-### Blockchain Stack
-- **Hedera**: Primary blockchain for legal records
-- **Zircuit**: Secondary chain for rewards system
-- **Privy**: Embedded wallets and gasless transactions
-- **Viem**: Ethereum interactions
-
-### Security Features
-- **TEE Hardware Signing**: Tamper-proof speed record signatures
-- **Merkle Trees**: Efficient cryptographic proofs
-- **Chain Linking**: Sequential record validation
-- **Anonymous Aggregation**: Privacy-preserving data insights
-
-## 📱 App Structure
+## App structure
 
 ```
 chainspeed/
-├── app/                    # Expo Router screens
-│   ├── index.tsx          # Main tracking screen
-│   ├── rewards.tsx        # XP and gift card redemption
-│   └── profile.tsx        # Legal proof generation
-├── components/            # Reusable UI components
-├── services/              # Core business logic
-│   ├── TEECryptoService.ts      # Secure Enclave integration
-│   ├── LocationService.ts       # GPS tracking
-│   ├── MerkleService.ts         # Checkpoint creation
-│   ├── BlockchainService.ts     # Multi-chain interactions
-│   └── XPService.ts             # Drive-to-earn logic
-├── contracts/             # Smart contracts
-│   ├── SpeedRegistry.sol        # Speed checkpoint storage
-│   └── XPRewards.sol           # Drive-to-earn system
-└── constants/             # Configuration
+├── app/                          # Expo Router screens
+│   ├── index.tsx                 # Tracking screen
+│   ├── rewards.tsx               # XP and mock gift-card redemption
+│   └── profile.tsx               # On-chain checkpoint history
+├── components/                   # UI components
+├── services/
+│   ├── TEECryptoService.ts       # Placeholder for Secure Enclave signing (not yet real)
+│   ├── CryptoService.ts          # Software hashing and placeholder attestation
+│   ├── LocationService.ts        # GPS and sensor tracking
+│   ├── MerkleService.ts          # 30-second checkpoints
+│   ├── BlockchainService.ts      # Hedera contract calls
+│   ├── XPService.ts              # XP reads and redemption
+│   ├── DataAggregationService.ts # City aggregation (stub)
+│   └── SpeedTrackingService.ts   # Orchestrator
+├── contracts/
+│   ├── contracts/SpeedRegistry.sol
+│   ├── contracts/XPRewards.sol
+│   └── scripts/                  # Deployment scripts
+└── docs/                         # Planning docs from the hackathon (see notes at the top of each)
 ```
 
-## 🎮 Usage Guide
+## Development
 
-### Starting a Tracking Session
-1. **Login**: Seamless authentication with Privy
-2. **TEE Setup**: Initialize Secure Enclave with Face ID
-3. **Start Tracking**: Begin secure speed recording
-4. **Drive Safely**: Earn XP for staying under speed limits
-5. **Generate Proofs**: Create legal evidence when needed
-
-### Earning Rewards
-- Drive under 75 mph to earn 1 XP per mile
-- Maintain daily driving streaks for bonus XP
-- Redeem XP for real gift cards:
-  - Target $10 = 1,000 XP
-  - Netflix $10 = 1,000 XP
-  - Target $50 = 5,000 XP
-  - Netflix $50 = 5,000 XP
-
-### Legal Defense
-1. Navigate to Profile → Generate Speed Proof
-2. Select date/time range of alleged violation
-3. Generate blockchain-verified proof document
-4. Present QR code evidence in court
-
-## 🔒 Security Model
-
-### TEE Implementation
-- **Hardware Key Generation**: Private keys created in iOS Secure Enclave
-- **Biometric Protection**: Face ID/Touch ID required for signing
-- **Tamper Detection**: Chain-linked signatures prevent data manipulation
-- **Session Management**: 30-minute authenticated sessions
-
-### Privacy Protection
-- **Local Processing**: GPS data processed on-device
-- **Anonymous Aggregation**: City-level statistics only
-- **Selective Disclosure**: Users control data sharing
-- **Encrypted Storage**: Sensitive data encrypted at rest
-
-## 🌍 Market Impact
-
-### Problems Solved
-- **$6B Speeding Tickets**: Unfair violations with no defense mechanism
-- **$200B Insurance Data**: Companies profit while drivers get nothing
-- **Drive-to-Earn Gap**: No real-world utility in existing apps
-
-### Revenue Model
-- **User Rewards**: XP system funded by data insights
-- **Insurance Partnerships**: Anonymous safe driving analytics
-- **Traffic Data**: City planning and navigation services
-- **Legal Services**: Premium proof generation features
-
-## 🛠️ Development
-
-### Building for Production
+### Contracts
 
 ```bash
-# Build for iOS
-yarn ios --configuration Release
-
-# Build for Android
-yarn android --variant=release
-
-# Deploy smart contracts
 cd contracts
-npx hardhat deploy --network hedera-testnet
-npx hardhat deploy --network zircuit-testnet
+npx hardhat test                                                    # SpeedRegistry tests (XPRewards is untested)
+npx hardhat run scripts/deploy-hedera.ts --network hederaTestnet    # deploy to Hedera testnet
 ```
 
-### Testing
+Deployment reads `PRIVATE_KEY` from the environment.
 
-```bash
-# Run tests
-yarn test
+### Docs
 
-# Test TEE functionality (requires physical iOS device)
-yarn test:tee
-
-# Test blockchain integration
-yarn test:contracts
-```
-
-
-
+The files in [`docs/`](docs/) are the original hackathon planning and progress notes. They describe intended designs, not the implementation. Each now carries a status note at the top.
