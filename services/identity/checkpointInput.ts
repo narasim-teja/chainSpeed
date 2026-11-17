@@ -18,6 +18,8 @@ export interface LocalCheckpoint {
   minSpeed: number;
   distanceMeters: number;
   recordCount: number;
+  /** The wallet the checkpoint's record tree is bound to. */
+  device?: string;
 }
 
 /**
@@ -41,6 +43,10 @@ export class InvalidCheckpointError extends Error {
 
 /** Above this, a "speed" is a GPS glitch, not driving. */
 export const MAX_PLAUSIBLE_MPH = 200;
+
+/** Mirror SpeedRegistry's allowances for distance vs average speed. */
+const SPEED_TOLERANCE_MPH = 5;
+const DISTANCE_TOLERANCE_METERS = 50;
 
 /** Back-to-back checkpoints can overlap by up to a second from millisecond → second rounding. */
 const MAX_ROUNDING_OVERLAP_SECONDS = 1n;
@@ -87,7 +93,7 @@ export function toCheckpointInput(local: LocalCheckpoint, position: ChainPositio
   }
   if (endTime <= startTime) endTime = startTime + 1n;
 
-  return {
+  const input = {
     seq: position.seq + 1n,
     prevRoot: position.prevRoot,
     merkleRoot,
@@ -99,4 +105,17 @@ export function toCheckpointInput(local: LocalCheckpoint, position: ChainPositio
     distanceMeters: checkedUint(local.distanceMeters, 65_535, 'distanceMeters'),
     recordCount: checkedUint(local.recordCount, 65_535, 'recordCount'),
   };
+
+  // Same rule as the contract, checked before signing so a bad checkpoint never costs a transaction.
+  const window = Number(input.endTime - input.startTime);
+  if (input.minSpeed > input.avgSpeed || input.avgSpeed > input.maxSpeed) {
+    throw new InvalidCheckpointError('Speed stats are inconsistent (min <= avg <= max)');
+  }
+  if (
+    input.distanceMeters * 100_000 >
+    (input.avgSpeed + SPEED_TOLERANCE_MPH) * 44_704 * window + DISTANCE_TOLERANCE_METERS * 100_000
+  ) {
+    throw new InvalidCheckpointError(`Distance ${input.distanceMeters} m does not match average speed ${input.avgSpeed} mph`);
+  }
+  return input;
 }

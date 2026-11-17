@@ -165,12 +165,15 @@ class XPService {
    * Submit accumulated XP to blockchain (called after checkpoint submission)
    */
   public async submitXPToBlockchain(): Promise<boolean> {
-    if (!this.driveToEarnEnabled || this.pendingXP === 0) {
+    // The contract decides XP from the signed checkpoints. Don't gate the call on the app's
+    // local estimate: with 30-second checkpoints that estimate is usually 0, which meant the
+    // on-chain cursor never advanced.
+    if (!this.driveToEarnEnabled) {
       return true;
     }
 
     try {
-      console.log(`📤 Submitting ${this.pendingXP} XP to blockchain...`);
+      console.log('📤 Asking XPRewards to process new checkpoints...');
       
       const blockchainService = getBlockchainService();
       const isConnected = await blockchainService.checkConnection();

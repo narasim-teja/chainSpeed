@@ -145,7 +145,17 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
   useEffect(() => {
     if (!account?.address) return;
     getDeviceIdentity(account.address as `0x${string}`)
-      .then((identity) => setDeviceRegistered(identity !== null))
+      .then(async (identity) => {
+        if (!identity) return setDeviceRegistered(false);
+        // The local key must be the one registered on chain; otherwise every checkpoint would
+        // fail with InvalidSignature. If the chain can't be reached, trust the local identity for now.
+        const onChain = await getBlockchainService().getDeviceKeyStatus(account.address);
+        if (onChain && (!onChain.active || onChain.keyHash.toLowerCase() !== identity.keyHash.toLowerCase())) {
+          console.warn('This device key is not the one registered on chain; registration is needed');
+          return setDeviceRegistered(false);
+        }
+        setDeviceRegistered(true);
+      })
       .catch((error) => {
         console.error('Failed to read device identity:', error);
         setDeviceRegistered(false);
@@ -305,10 +315,14 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
         );
       }
       
-      await trackingService.stopTracking();
-      // Anchor anything still queued while the signing key is unlocked, then lock it.
-      await getBlockchainService().retryPendingCheckpoints();
-      endDriveSession();
+      try {
+        await trackingService.stopTracking();
+        // Anchor anything still queued while the signing key is unlocked.
+        await getBlockchainService().retryPendingCheckpoints();
+      } finally {
+        // Lock the signing key even if stopping or the retry failed.
+        endDriveSession();
+      }
       
       if (stats.driveToEarnEnabled) {
         Alert.alert(
@@ -467,7 +481,7 @@ export default function TrackingScreen({ navigation }: TrackingScreenProps = {})
         {!stats.isTracking && (
           <View style={styles.tipsSection}>
             <Text style={styles.tipTitle}>💡 Quick Tips</Text>
-            <Text style={styles.tipText}>• Register this device once: Apple attests its signing key</Text>
+            <Text style={styles.tipText}>• Register this device once: Apple attests the app, and its signing key is registered on chain</Text>
             <Text style={styles.tipText}>• Each drive starts with one Face ID check</Text>
             <Text style={styles.tipText}>• Drive safely to earn rewards with secure tracking</Text>
           </View>

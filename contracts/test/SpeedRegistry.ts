@@ -313,6 +313,28 @@ describe("SpeedRegistry v2", function () {
         .withArgs(first.merkleRoot);
     });
 
+    it("second/third review: distance must match the average speed (what 'safe' XP uses)", async function () {
+      const now = BigInt(await time.latest());
+      // Second review: avg = max = 0 mph carrying 27 km in 10 minutes.
+      // Third review: avg = 0 but max = 100 mph still passed a max-speed bound.
+      for (const maxSpeed of [0, 100]) {
+        const cp = await nextInput({ startTime: now - 600n, endTime: now, avgSpeed: 0, maxSpeed, minSpeed: 0, distanceMeters: 27_000 });
+        await expect(submit(cp)).to.be.revertedWithCustomError(registry, "DistanceExceedsAverageSpeed");
+      }
+    });
+
+    it("third review: accepts real-world edge cases the stricter rule rejected", async function () {
+      // A 1-second final window at Stop covering 20 m at 30 mph.
+      const short = await nextInput({ avgSpeed: 30, maxSpeed: 30, minSpeed: 30, distanceMeters: 20 });
+      await submit({ ...short, endTime: short.startTime + 1n });
+      // Stopped at a light with GPS jitter: 90 m of noise over 30 s at 0 mph.
+      await time.increase(30);
+      await expect(submit(await nextInput({ avgSpeed: 0, maxSpeed: 1, minSpeed: 0, distanceMeters: 90 }))).to.emit(
+        registry,
+        "CheckpointSubmitted"
+      );
+    });
+
     it("F15: rejects speed stats that are internally inconsistent", async function () {
       const cp = await nextInput({ minSpeed: 20, avgSpeed: 70, maxSpeed: 40 }); // average above the maximum
       await expect(submit(cp)).to.be.revertedWithCustomError(registry, "InconsistentSpeeds");
@@ -360,7 +382,7 @@ describe("SpeedRegistry v2", function () {
     }
 
     async function anchorTree(records: LeafRecord[], base: Input) {
-      const { root, tree } = buildRecordTree(records);
+      const { root, tree } = buildRecordTree(wallet.address as `0x${string}`, records);
       await submit({ ...base, merkleRoot: root, recordCount: records.length });
       return { root, tree };
     }
@@ -370,21 +392,21 @@ describe("SpeedRegistry v2", function () {
       const records = recordsFor(base);
       const { root, tree } = await anchorTree(records, base);
       for (const r of records) {
-        const proof = recordProof(tree, recordLeaf(r));
+        const proof = recordProof(tree, recordLeaf(wallet.address as `0x${string}`, r));
         expect(await registry.verifyRecord(wallet.address, root, proof, toLeafValues(r))).to.equal(true);
       }
     });
 
     it("computes the same leaf hash as the app", async function () {
       const r = recordsFor(await nextInput(), 1)[0]!;
-      expect(await registry.recordLeafHash(toLeafValues(r))).to.equal(recordLeaf(r));
+      expect(await registry.recordLeafHash(wallet.address, toLeafValues(r))).to.equal(recordLeaf(wallet.address as `0x${string}`, r));
     });
 
     it("rejects a record whose speed was changed after the fact", async function () {
       const base = await nextInput();
       const records = recordsFor(base);
       const { root, tree } = await anchorTree(records, base);
-      const proof = recordProof(tree, recordLeaf(records[2]!));
+      const proof = recordProof(tree, recordLeaf(wallet.address as `0x${string}`, records[2]!));
       const doctored = { ...records[2]!, speed: records[2]!.speed - 20 };
       expect(await registry.verifyRecord(wallet.address, root, proof, toLeafValues(doctored))).to.equal(false);
     });
@@ -394,15 +416,33 @@ describe("SpeedRegistry v2", function () {
       const records = recordsFor(base);
       records[4] = { ...records[4]!, timestamp: Number(base.endTime) * 1000 + 60_000 };
       const { root, tree } = await anchorTree(records, base);
-      const proof = recordProof(tree, recordLeaf(records[4]!));
+      const proof = recordProof(tree, recordLeaf(wallet.address as `0x${string}`, records[4]!));
       expect(await registry.verifyRecord(wallet.address, root, proof, toLeafValues(records[4]!))).to.equal(false);
+    });
+
+    it("second review: another device that re-anchors my root cannot pass my records off as its own", async function () {
+      const base = await nextInput();
+      const records = recordsFor(base);
+      const { root, tree } = await anchorTree(records, base);
+
+      // The attacker, with a registered device of their own, anchors the same root and window.
+      const attackerKey = makeEnclaveKey();
+      await registry.connect(registrar).registerDevice(other.address, attackerKey.qx, attackerKey.qy);
+      const squat: Input = { ...base, merkleRoot: root, recordCount: records.length, seq: 1n, prevRoot: ethers.ZeroHash };
+      const sig = await sign(registry, other.address, squat, attackerKey);
+      await registry.submitCheckpoint(other.address, squat, sig.r, sig.s);
+
+      // My disclosed record and proof verify for me, but not for the attacker.
+      const proof = recordProof(tree, recordLeaf(wallet.address as `0x${string}`, records[0]!));
+      expect(await registry.verifyRecord(wallet.address, root, proof, toLeafValues(records[0]!))).to.equal(true);
+      expect(await registry.verifyRecord(other.address, root, proof, toLeafValues(records[0]!))).to.equal(false);
     });
 
     it("rejects a proof checked against a different device", async function () {
       const base = await nextInput();
       const records = recordsFor(base);
       const { root, tree } = await anchorTree(records, base);
-      const proof = recordProof(tree, recordLeaf(records[0]!));
+      const proof = recordProof(tree, recordLeaf(wallet.address as `0x${string}`, records[0]!));
       await expect(
         registry.verifyRecord(other.address, root, proof, toLeafValues(records[0]!))
       ).to.be.revertedWithCustomError(registry, "CheckpointNotFound");

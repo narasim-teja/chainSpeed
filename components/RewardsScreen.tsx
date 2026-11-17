@@ -279,7 +279,7 @@ export default function RewardsScreen({ navigation }: RewardsScreenProps) {
           <Text style={styles.infoTitle}>💡 How to earn XP:</Text>
           <Text style={styles.infoText}>• Drive safely (under 75 mph) to earn 1 XP per mile</Text>
           <Text style={styles.infoText}>• Maintain daily driving streaks for 5 XP</Text>
-          <Text style={styles.infoText}>• Redeem XP for real gift cards</Text>
+          <Text style={styles.infoText}>• Spend XP on gift card requests (fulfillment is not built yet)</Text>
         </View>
       </ScrollView>
 
@@ -348,7 +348,7 @@ export default function RewardsScreen({ navigation }: RewardsScreenProps) {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Ionicons name="checkmark-circle" size={64} color="#4CAF50" />
-            <Text style={styles.modalTitle}>Gift Card Redeemed!</Text>
+            <Text style={styles.modalTitle}>Redemption Requested</Text>
             
             {redeemedCard && (
               <View style={styles.redeemedCardInfo}>

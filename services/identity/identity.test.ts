@@ -76,7 +76,7 @@ describe('toCheckpointInput', () => {
   });
 
   test('never starts before the previous window ended', () => {
-    const input = toCheckpointInput({ ...base, startTime: 999_500, endTime: 1_000_400 }, position);
+    const input = toCheckpointInput({ ...base, startTime: 999_500, endTime: 1_000_400, distanceMeters: 10 }, position);
     expect(input.startTime).toBe(1000n);
     expect(input.endTime).toBe(1001n); // end stays strictly after start
   });
@@ -101,6 +101,12 @@ describe('toCheckpointInput', () => {
     ]) {
       expect(() => toCheckpointInput({ ...base, ...bad }, position)).toThrow(InvalidCheckpointError);
     }
+  });
+
+  test('second review: rejects a distance faster than the max speed allows (mirrors the contract)', () => {
+    expect(() => toCheckpointInput({ ...base, avgSpeed: 0, maxSpeed: 0, minSpeed: 0, distanceMeters: 1_350 }, position)).toThrow(
+      InvalidCheckpointError
+    );
   });
 
   test('rejects a root that is not 32 bytes', () => {

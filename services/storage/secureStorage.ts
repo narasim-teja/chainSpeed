@@ -34,12 +34,26 @@ function storageKey(): Promise<Uint8Array> {
   return keyPromise;
 }
 
-/** Reads a value. Legacy plaintext values are still readable and get encrypted on their next write. */
+/**
+ * Reads a value. Legacy plaintext values are still readable and get encrypted on their next write.
+ *
+ * A sealed value that cannot be opened (for example after restoring a backup onto another
+ * phone: the key is ThisDeviceOnly and is not restored) is moved aside to `<slot>.unreadable`
+ * and treated as absent. Otherwise every later read-modify-write of that slot would fail forever.
+ */
 export async function getSecureJSON<T>(slot: string): Promise<T | null> {
   const raw = await AsyncStorage.getItem(slot);
   if (raw == null) return null;
   if (!isSealed(raw)) return JSON.parse(raw) as T;
-  return JSON.parse(openSealed(await storageKey(), slot, raw)) as T;
+  const key = await storageKey();
+  try {
+    return JSON.parse(openSealed(key, slot, raw)) as T;
+  } catch (error) {
+    console.warn(`Stored value for ${slot} cannot be decrypted with this device's key; setting it aside`);
+    await AsyncStorage.multiSet([[`${slot}.unreadable`, raw]]);
+    await AsyncStorage.removeItem(slot);
+    return null;
+  }
 }
 
 export async function setSecureJSON(slot: string, value: unknown): Promise<void> {

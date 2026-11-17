@@ -274,16 +274,10 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
         endTime: new Date(endTime).toISOString()
       });
 
-      const speedTrackingService = getSpeedTrackingService();
       const blockchainService = getBlockchainService();
 
-      // 1. Get local records for statistics
-      const exportData = await speedTrackingService.exportDataForTimeRange(startTime, endTime);
-      
-      if (!exportData || exportData.records.length === 0) {
-        Alert.alert('No Data', 'No speed records found for the specified timeframe');
-        return;
-      }
+      // 1. Proofs come from the signed checkpoints on chain and the per-checkpoint record
+      //    bundles kept on the device (30 days), not from the short live-stats buffer.
 
       // 2. Get checkpoints directly from blockchain for the device and timeframe
       const deviceAddress = getWalletAddress();
@@ -307,6 +301,9 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
         try {
           // Generate proof document for each blockchain checkpoint
           const proofDoc = await blockchainService.generateProofDocument(blockchainCheckpoint.merkleRoot);
+          // Spot-check one record of this checkpoint on chain (Merkle inclusion + time window)
+          const sample = await getMerkleService().generateSampleProof(blockchainCheckpoint.merkleRoot);
+          const recordVerified = sample ? await blockchainService.verifyRecordOnChain(sample) : false;
           
           verificationResults.push({
             checkpoint: {
@@ -321,6 +318,8 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
             blockchainCheckpoint,
             proofDocument: proofDoc,
             isValid: proofDoc.isValid,
+            recordVerified,
+            recordProof: sample, // { device, root, leaf, path, record }: checkable with SpeedRegistry.verifyRecord
             timeRange: {
               start: new Date(blockchainCheckpoint.startTime),
               end: new Date(blockchainCheckpoint.endTime)
@@ -337,27 +336,28 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
         }
       }
 
-      // 4. Calculate aggregate statistics from local records
-      const allRecords = exportData.records;
-      const speeds = allRecords.map(r => r.speed);
-      const avgSpeed = speeds.length > 0 ? speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length : 0;
-      const maxSpeed = speeds.length > 0 ? Math.max(...speeds) : 0;
-      const minSpeed = speeds.length > 0 ? Math.min(...speeds) : 0;
+      // 4. Statistics come only from the signed, anchored checkpoints (fail closed, F10).
+      //    Local records are unsigned on their own and are used only for the record proofs above.
+      const totalSeconds = blockchainCheckpoints.reduce((n, c) => n + (c.endTime - c.startTime) / 1000, 0);
+      const avgSpeed = totalSeconds > 0
+        ? blockchainCheckpoints.reduce((n, c) => n + c.avgSpeed * ((c.endTime - c.startTime) / 1000), 0) / totalSeconds
+        : 0;
+      const maxSpeed = Math.max(...blockchainCheckpoints.map((c) => c.maxSpeed));
+      const minSpeed = Math.min(...blockchainCheckpoints.map((c) => c.minSpeed));
+      const totalDistance = blockchainCheckpoints.reduce((n, c) => n + c.distanceMeters, 0) / 1609.344;
+      const recordCount = blockchainCheckpoints.reduce((n, c) => n + c.recordCount, 0);
 
-      // Calculate total distance
-      let totalDistance = 0;
-      for (let i = 1; i < allRecords.length; i++) {
-        const prev = allRecords[i - 1];
-        const curr = allRecords[i];
-        const R = 3959; // Earth's radius in miles
-        const dLat = (curr.latitude - prev.latitude) * Math.PI / 180;
-        const dLon = (curr.longitude - prev.longitude) * Math.PI / 180;
-        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                  Math.cos(prev.latitude * Math.PI / 180) * Math.cos(curr.latitude * Math.PI / 180) *
-                  Math.sin(dLon/2) * Math.sin(dLon/2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        totalDistance += R * c;
-      }
+      // 5. The signing key must still be registered and active on chain, and every checkpoint
+      //    must have been signed by that key.
+      const keyStatus = await blockchainService.getDeviceKeyStatus(deviceAddress);
+      const signedByActiveKey = (c: { keyHash?: string }) =>
+        !!keyStatus?.keyHash && c.keyHash?.toLowerCase() === keyStatus.keyHash.toLowerCase();
+
+      // 6. Coverage: how much of the requested range is actually anchored, and where the gaps are.
+      //    A gap on chain looks the same as not driving, so it must be visible.
+      const requestedSeconds = (endTime - startTime) / 1000;
+      const sorted = [...blockchainCheckpoints].sort((a, b) => a.startTime - b.startTime);
+      const gaps = sorted.filter((c, i) => i > 0 && c.startTime - sorted[i - 1].endTime > 2000).length;
 
       const proofSummary = {
         timeframe: {
@@ -370,23 +370,40 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
           maxSpeed: Math.round(maxSpeed * 100) / 100,
           minSpeed: Math.round(minSpeed * 100) / 100,
           totalDistance: Math.round(totalDistance * 100) / 100,
-          recordCount: allRecords.length
+          recordCount,
+          source: 'signed checkpoints anchored on chain',
         },
         verification: {
           checkpointsFound: verificationResults.length,
           checkpointsVerified: verificationResults.filter(r => r.isValid).length,
-          blockchainVerified: verificationResults.every(r => r.isValid),
+          recordsVerified: verificationResults.filter((r: any) => r.recordVerified).length,
+          // Verified only if every checkpoint is anchored, every sampled record proof passes on
+          // chain, and every checkpoint was signed by the key that is active now. This says nothing
+          // about coverage, which is reported separately.
+          blockchainVerified:
+            verificationResults.length > 0 &&
+            verificationResults.every((r: any) => r.isValid && r.recordVerified && signedByActiveKey(r.blockchainCheckpoint)) &&
+            keyStatus?.active === true,
+          coverage: {
+            anchoredMinutes: Math.round((totalSeconds / 60) * 10) / 10,
+            requestedMinutes: Math.round((requestedSeconds / 60) * 10) / 10,
+            gaps,
+          },
           contractAddress: CONTRACT_CONFIG.address,
           network: CURRENT_CHAIN_CONFIG.name
         },
         checkpoints: verificationResults,
-        deviceAttestation: exportData.attestation,
+        deviceKey: {
+          keyHash: keyStatus?.keyHash ?? null,
+          activeOnChain: keyStatus?.active ?? false,
+        },
         generatedAt: new Date().toISOString(),
         walletAddress: getWalletAddress()
       };
 
       setProofResult(proofSummary);
-      console.log('Proof generated successfully:', proofSummary);
+      // Summary only: the full proof contains record coordinates (F13).
+      console.log('Proof generated:', proofSummary.verification);
       console.log('UI State after setting proofResult:', {
         proofResultExists: !!proofSummary,
         blockchainVerified: proofSummary.verification.blockchainVerified,
@@ -394,10 +411,13 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
         recordCount: proofSummary.statistics.recordCount
       });
       
-      // Show success alert
+      // The alert reports what was actually verified, not a blanket success.
+      const v = proofSummary.verification;
       Alert.alert(
-        'Proof Generated! ✅', 
-        `Successfully generated blockchain-verified speed proof with ${proofSummary.verification.checkpointsVerified} checkpoints directly from blockchain. Scroll down to view results.`,
+        v.blockchainVerified ? 'Proof Verified ✅' : 'Proof Incomplete ⚠️',
+        v.blockchainVerified
+          ? `${v.checkpointsVerified} signed checkpoints verified, covering ${v.coverage.anchoredMinutes} of the ${v.coverage.requestedMinutes} minutes requested (${v.coverage.gaps} gaps). Scroll down to view results.`
+          : `Checkpoints anchored: ${v.checkpointsVerified}/${v.checkpointsFound}. Record proofs verified: ${v.recordsVerified}/${v.checkpointsFound}. Device key ${proofSummary.deviceKey?.activeOnChain ? 'active' : 'NOT active'}. Scroll down for details.`,
         [{ text: 'View Proof', onPress: () => {
           setTimeout(() => {
             if (scrollViewRef.current) {
@@ -451,9 +471,9 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
         {/* Speed Proof Query */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { marginBottom: 15 }]}>Legal Speed Verification</Text>
+          <Text style={[styles.sectionTitle, { marginBottom: 15 }]}>Speed Proof</Text>
           <Text style={styles.description}>
-            Generate blockchain-verified speed proofs for legal defense against speeding tickets.
+            Check your signed speed checkpoints for a time range against the blockchain.
           </Text>
 
           <TouchableOpacity 
@@ -621,6 +641,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                 </Text>
               </TouchableOpacity>
               
+              {__DEV__ && (
               <TouchableOpacity 
                 style={styles.warningButton} 
                 onPress={async () => {
@@ -646,6 +667,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                 <Ionicons name="trash-outline" size={20} color="white" />
                 <Text style={styles.buttonText}>Clear Pending (Debug)</Text>
               </TouchableOpacity>
+              )}
             </>
           )}
 
@@ -910,7 +932,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
             {console.log('Rendering ProfileScreen, proofResult:', !!proofResult, proofResult ? 'has data' : 'no data')}
             {proofResult && (
               <View style={styles.proofResultsContainer}>
-                <Text style={styles.resultsTitle}>🛡️ Legal Speed Proof Generated</Text>
+                <Text style={styles.resultsTitle}>Speed Proof</Text>
                 
                 {/* Summary */}
                 <View style={styles.proofSection}>
@@ -928,7 +950,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
                 {/* Speed Statistics */}
                 <View style={styles.proofSection}>
-                  <Text style={styles.proofSectionTitle}>Speed Statistics</Text>
+                  <Text style={styles.proofSectionTitle}>Speed Statistics (from signed checkpoints)</Text>
                   <Text style={styles.proofText}>Average Speed: {proofResult.statistics.avgSpeed} mph</Text>
                   <Text style={styles.proofText}>Maximum Speed: {proofResult.statistics.maxSpeed} mph</Text>
                   <Text style={styles.proofText}>Minimum Speed: {proofResult.statistics.minSpeed} mph</Text>
@@ -955,6 +977,15 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                   <Text style={styles.proofText}>
                     Checkpoints: {proofResult.verification.checkpointsVerified}/{proofResult.verification.checkpointsFound} verified
           </Text>
+                  <Text style={styles.proofText}>
+                    Record proofs: {proofResult.verification.recordsVerified}/{proofResult.verification.checkpointsFound} verified on chain
+          </Text>
+                  <Text style={styles.proofText}>
+                    Coverage: {proofResult.verification.coverage?.anchoredMinutes} of {proofResult.verification.coverage?.requestedMinutes} minutes anchored, {proofResult.verification.coverage?.gaps} gaps
+          </Text>
+                  <Text style={styles.proofText}>
+                    Device key: {proofResult.deviceKey?.activeOnChain ? 'registered and active' : 'NOT active on chain'}
+          </Text>
                   <Text style={styles.proofText}>Network: {proofResult.verification.network}</Text>
                   
                   <TouchableOpacity 
@@ -972,7 +1003,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                 <View style={styles.legalNotice}>
                   <Ionicons name="information-circle" size={20} color="#FF9800" />
                   <Text style={styles.legalText}>
-                    This proof is cryptographically verified on the {CURRENT_CHAIN_CONFIG.displayName} blockchain and can be used as evidence in legal proceedings.
+                    Hackathon prototype on {CURRENT_CHAIN_CONFIG.displayName} testnet. This shows your device signed and anchored these checkpoints; it does not prove the readings are true (a modified app or spoofed GPS can sign false data) and it is not legal evidence.
           </Text>
         </View>
 

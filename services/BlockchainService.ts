@@ -1,7 +1,8 @@
-import { createPublicClient, createWalletClient, http, custom, defineChain, type Address, type Hex } from 'viem';
+import { createPublicClient, createWalletClient, http, custom, defineChain, encodeAbiParameters, keccak256, type Address, type Hex } from 'viem';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { InvalidCheckpointError, OutOfOrderCheckpointError, type LocalCheckpoint } from './identity/checkpointInput';
 import { toLeafValues } from './identity/recordTree';
+import { PERMANENT_REVERTS, drainInOrder, revertName, type DrainResult, type SubmitOutcome } from './identity/checkpointQueue';
 import { getSecureJSON, setSecureJSON } from './storage/secureStorage';
 import type { MerkleProof } from './MerkleService';
 import { CheckpointSubmitter, StaleCheckpointError, type CheckpointChain } from './identity/checkpointSubmitter';
@@ -21,6 +22,16 @@ export interface BlockchainCheckpoint {
   keyHash: string; // keccak256(qx, qy) of the enclave key that signed it
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); }
+    );
+  });
+}
+
 // Define current chain for viem
 const currentChain = defineChain({
   id: CURRENT_CHAIN_CONFIG.id,
@@ -38,6 +49,8 @@ class BlockchainServiceClass {
   private publicClient: any;
   private walletClient: any = null;
   private checkpointSubmitter: CheckpointSubmitter | null = null;
+  private draining: Promise<unknown> = Promise.resolve();
+  private walletLock: Promise<unknown> = Promise.resolve();
   private isConnected = false;
   private xpCache: Map<string, { data: any; timestamp: number; }> = new Map();
   private readonly CACHE_DURATION = 30000; // 30 seconds cache
@@ -312,13 +325,12 @@ class BlockchainServiceClass {
   }
 
   /**
-   * Signs a checkpoint with the device's Secure Enclave key and submits it to
-   * SpeedRegistry v2 (see docs/identity-design.md). Submissions are serialized
-   * and signed at send time, chained to the device's on-chain position.
+   * Queues a checkpoint and anchors the queue oldest first (see checkpointQueue.ts): each is
+   * signed by the device's Secure Enclave key at send time and submitted to SpeedRegistry v2.
    *
-   * Returns the transaction hash; 'pending-…' if it was queued for a retry
-   * (no wallet, no drive session, or a transient failure); or null if it can
-   * no longer be anchored (past the contract's 10-minute window).
+   * Returns the transaction hash; 'pending-…' if it is still queued (no wallet, no drive
+   * session, or an earlier checkpoint is waiting on a transient failure); or null if it can
+   * never be anchored (stale, invalid, or rejected by the contract) and was set aside.
    */
   async submitCheckpoint(checkpoint: LocalCheckpoint): Promise<string | null> {
     const local: LocalCheckpoint = {
@@ -330,38 +342,109 @@ class BlockchainServiceClass {
       minSpeed: checkpoint.minSpeed,
       distanceMeters: checkpoint.distanceMeters,
       recordCount: checkpoint.recordCount,
+      device: checkpoint.device,
     };
+    // Enqueue inside the drain lock: a drain already in flight writes back its own snapshot of
+    // the queue, and would otherwise erase an entry added meanwhile.
+    const result = await this.drainPendingQueue(local);
+    const anchored = result.anchored.find((a) => a.checkpoint.merkleRoot === local.merkleRoot);
+    if (anchored) return anchored.txHash;
+    if (result.unanchored.some((u) => u.checkpoint.merkleRoot === local.merkleRoot)) return null;
+    return 'pending-' + Date.now().toString();
+  }
 
+  /** Serialized: only one drain (and enqueue) runs at a time. */
+  private drainPendingQueue(enqueue?: LocalCheckpoint): Promise<DrainResult<LocalCheckpoint>> {
+    const run = this.draining.then(async () => {
+      if (enqueue) await this.storePendingCheckpoint(enqueue);
+      return this.drainPendingQueueNow();
+    });
+    this.draining = run.catch(() => undefined);
+    return run;
+  }
+
+  private async drainPendingQueueNow(): Promise<DrainResult<LocalCheckpoint>> {
+    const empty: DrainResult<LocalCheckpoint> = { anchored: [], unanchored: [], remaining: [] };
     const device = await this.getConnectedAddress();
-    if (!device) {
-      await this.storePendingCheckpoint(local);
-      return 'pending-' + Date.now().toString();
-    }
+    if (!device) return empty;
     if (!hasDriveSession()) {
-      console.warn('No drive session: checkpoint queued unsigned until Face ID unlocks the signing key');
-      await this.storePendingCheckpoint(local);
-      return 'pending-' + Date.now().toString();
+      console.warn('No drive session: checkpoints stay queued until Face ID unlocks the signing key');
+      return empty;
     }
 
-    try {
-      const txHash = await this.getCheckpointSubmitter().submit(device, local);
-      await this.removePendingCheckpoint(local.merkleRoot);
-      console.log('Signed checkpoint anchored:', { root: local.merkleRoot.substring(0, 10) + '...', txHash });
-      return txHash;
-    } catch (error) {
-      if (
-        error instanceof StaleCheckpointError ||
-        error instanceof OutOfOrderCheckpointError ||
-        error instanceof InvalidCheckpointError
-      ) {
-        await this.removePendingCheckpoint(local.merkleRoot);
-        await this.storeUnanchoredCheckpoint(local, error.message);
-        return null;
-      }
-      console.error('Checkpoint submission failed, queued for retry:', error);
-      await this.storePendingCheckpoint(local);
-      return 'pending-' + Date.now().toString();
+    const queue = await this.getPendingCheckpoints();
+    const result = await drainInOrder(queue, (cp) =>
+      cp.device && cp.device.toLowerCase() !== device.toLowerCase()
+        ? Promise.resolve<SubmitOutcome>({ kind: 'permanent', reason: 'Recorded for a different wallet' })
+        : this.submitOne(device, cp)
+    );
+
+    for (const { checkpoint, txHash } of result.anchored) {
+      console.log('Signed checkpoint anchored:', { root: checkpoint.merkleRoot.substring(0, 10) + '...', txHash });
     }
+    for (const { checkpoint, reason } of result.unanchored) {
+      await this.storeUnanchoredCheckpoint(checkpoint, reason);
+    }
+    await setSecureJSON(BlockchainServiceClass.PENDING_KEY, result.remaining);
+    return result;
+  }
+
+  private async submitOne(device: Address, checkpoint: LocalCheckpoint): Promise<SubmitOutcome> {
+    try {
+      return { kind: 'anchored', txHash: await this.getCheckpointSubmitter().submit(device, checkpoint) };
+    } catch (error) {
+      const name = revertName(error);
+      const tooLateOrDuplicate =
+        error instanceof StaleCheckpointError || error instanceof OutOfOrderCheckpointError || name === 'DuplicateRoot';
+      // A transaction can be mined even though its receipt was lost: check before giving up on it.
+      if (tooLateOrDuplicate) {
+        const anchored = await this.isAnchored(device, checkpoint.merkleRoot);
+        if (anchored === true) return { kind: 'anchored', txHash: 'already-anchored' };
+        if (anchored === 'unknown') return { kind: 'transient', reason: 'Could not check whether it was anchored' };
+      }
+      if (tooLateOrDuplicate || error instanceof InvalidCheckpointError) {
+        return { kind: 'permanent', reason: error instanceof Error ? error.message : String(name) };
+      }
+      if (name && PERMANENT_REVERTS.has(name)) return { kind: 'permanent', reason: `Contract rejected it: ${name}` };
+      console.error('Checkpoint submission failed; it stays queued, in order:', error);
+      return { kind: 'transient', reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /** true / false from the contract; 'unknown' if the chain could not be reached. */
+  private async isAnchored(device: Address, merkleRoot: string): Promise<boolean | 'unknown'> {
+    try {
+      await this.publicClient.readContract({
+        address: CONTRACT_CONFIG.address,
+        abi: SPEED_REGISTRY_ABI,
+        functionName: 'getCheckpointByRoot',
+        args: [device, merkleRoot],
+      });
+      return true;
+    } catch (error) {
+      return revertName(error) === 'CheckpointNotFound' ? false : 'unknown';
+    }
+  }
+
+  /**
+   * Sends one transaction from the user's wallet and waits for its receipt. Wallet writes are
+   * serialized: two in flight at once (say, the last checkpoint and the XP call at Stop) can be
+   * given the same nonce and one of them rejected.
+   */
+  private sendAndWait(request: any): Promise<{ hash: Hex; receipt: any }> {
+    const run = this.walletLock.then(async () => {
+      // A hung wallet request would otherwise hold the lock, the queue and Stop forever.
+      const hash: Hex = await withTimeout(this.walletClient.writeContract(request), 120_000, 'Wallet request timed out');
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+      return { hash, receipt };
+    });
+    this.walletLock = run.catch(() => undefined);
+    return run;
+  }
+
+  /** The connected wallet, which is also the device address checkpoints are signed for. */
+  async getDeviceAddress(): Promise<Address | null> {
+    return this.getConnectedAddress();
   }
 
   private async getConnectedAddress(): Promise<Address | null> {
@@ -398,8 +481,7 @@ class BlockchainServiceClass {
           // Hedera charges for at least 80% of the gas limit, so estimate instead of over-provisioning.
           // Estimation also surfaces the contract's revert reason before anything is sent.
           const estimate: bigint = await this.publicClient.estimateContractGas(request);
-          const hash: Hex = await this.walletClient.writeContract({ ...request, gas: (estimate * 12n) / 10n });
-          const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+          const { hash, receipt } = await this.sendAndWait({ ...request, gas: (estimate * 12n) / 10n });
           if (receipt.status !== 'success') throw new Error(`submitCheckpoint reverted: ${hash}`);
           return hash;
         },
@@ -418,6 +500,10 @@ class BlockchainServiceClass {
     try {
       const pending = (await this.getPendingCheckpoints()).filter((cp) => cp.merkleRoot !== checkpoint.merkleRoot);
       pending.push(checkpoint);
+      const overflow = pending.slice(0, Math.max(0, pending.length - 50));
+      for (const dropped of overflow) {
+        await this.storeUnanchoredCheckpoint(dropped, 'Queue full: too many checkpoints waiting');
+      }
       await setSecureJSON(BlockchainServiceClass.PENDING_KEY, pending.slice(-50));
     } catch (error) {
       console.error('Failed to store pending checkpoint:', error);
@@ -470,19 +556,14 @@ class BlockchainServiceClass {
   }
 
   /**
-   * Retries queued checkpoints in time order. Ones past the 10-minute window
-   * cannot be anchored any more and move to the unanchored list.
+   * Anchors queued checkpoints, oldest first. Ones that can never be anchored (past the
+   * 10-minute window, invalid, or rejected by the contract) move to the unanchored list.
    */
   async retryPendingCheckpoints(): Promise<{ submitted: number; failed: number }> {
-    let submitted = 0;
-    let failed = 0;
-    const pending = (await this.getPendingCheckpoints()).sort((a, b) => a.startTime - b.startTime);
-    for (const checkpoint of pending) {
-      const result = await this.submitCheckpoint(checkpoint);
-      if (result && result.startsWith('0x')) submitted++;
-      else failed++;
-    }
-    console.log(`Retry completed: ${submitted} submitted, ${failed} not submitted`);
+    const result = await this.drainPendingQueue();
+    const submitted = result.anchored.length;
+    const failed = result.unanchored.length + result.remaining.length;
+    console.log(`Retry completed: ${submitted} anchored, ${result.unanchored.length} unanchored, ${result.remaining.length} still queued`);
     return { submitted, failed };
   }
 
@@ -631,22 +712,37 @@ class BlockchainServiceClass {
     }
   }
 
+  /** The device key registered on chain for `device`, as SpeedRegistry stores it. */
+  async getDeviceKeyStatus(device: string): Promise<{ active: boolean; keyHash: Hex } | null> {
+    try {
+      const [qx, qy, active] = await this.publicClient.readContract({
+        address: CONTRACT_CONFIG.address,
+        abi: SPEED_REGISTRY_ABI,
+        functionName: 'deviceKeys',
+        args: [device],
+      });
+      return { active, keyHash: keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'bytes32' }], [qx, qy])) };
+    } catch (error) {
+      console.error('Failed to read device key status:', error);
+      return null;
+    }
+  }
+
   /**
    * Verifies on chain that a record belongs to a checkpoint this device anchored
    * (SpeedRegistry.verifyRecord): Merkle inclusion plus the record's time inside the window.
    */
   async verifyRecordOnChain(proof: MerkleProof): Promise<boolean> {
     try {
-      const device = await this.getConnectedAddress();
-      if (!device) return false;
       return await this.publicClient.readContract({
         address: CONTRACT_CONFIG.address,
         abi: SPEED_REGISTRY_ABI,
         functionName: 'verifyRecord',
-        args: [device, proof.root, proof.path, toLeafValues(proof.record)],
+        args: [proof.device, proof.root, proof.path, toLeafValues(proof.record)],
       });
     } catch (error) {
-      console.error('Failed to verify record on chain:', error);
+      // Not the raw error: viem includes the call's arguments, which contain the record's coordinates.
+      console.error('Failed to verify record on chain:', revertName(error) ?? (error as any)?.shortMessage ?? 'unknown error');
       return false;
     }
   }
@@ -840,11 +936,9 @@ class BlockchainServiceClass {
         gasPrice: 1000000000n, // 1 gwei
       });
 
-      const hash = await this.walletClient.writeContract(request);
+      const { hash, receipt } = await this.sendAndWait(request);
       console.log('🎯 Drive-to-earn toggle transaction:', hash);
 
-      // Wait for confirmation
-      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
       console.log('✅ Drive-to-earn toggle confirmed:', receipt.status);
 
       return receipt.status === 'success';
@@ -884,11 +978,9 @@ class BlockchainServiceClass {
         account: account,
       });
 
-      const hash = await this.walletClient.writeContract(request);
+      const { hash, receipt } = await this.sendAndWait(request);
       console.log('🎯 XP processing transaction:', hash);
 
-      // Wait for confirmation
-      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
       console.log('✅ XP processing confirmed:', receipt.status);
 
       return receipt.status === 'success';
@@ -929,11 +1021,9 @@ class BlockchainServiceClass {
         account: account,
       });
 
-      const hash = await this.walletClient.writeContract(request);
+      const { hash, receipt } = await this.sendAndWait(request);
       console.log('🎁 Gift card redemption transaction:', hash);
 
-      // Wait for confirmation
-      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
       console.log('✅ Gift card redemption confirmed:', receipt.status);
 
       return receipt.status === 'success';

@@ -13,6 +13,10 @@ import Security
 /// signing call until the drive ends, so the user authenticates once per drive.
 public class SecureEnclaveModule: Module {
   private var session: LAContext?
+  /// Monotonic (seconds since boot), so changing the wall clock cannot extend a session.
+  private var sessionStartedAt: TimeInterval?
+  /// A drive session unlocks the key for at most this long.
+  private let maxSessionDuration: TimeInterval = 4 * 60 * 60
 
   public func definition() -> ModuleDefinition {
     Name("SecureEnclave")
@@ -83,21 +87,21 @@ public class SecureEnclaveModule: Module {
       }
       self.session?.invalidate()
       self.session = context
+      self.sessionStartedAt = ProcessInfo.processInfo.systemUptime
     }
 
     Function("endSession") {
-      self.session?.invalidate()
-      self.session = nil
+      self.endSession()
     }
 
     Function("hasSession") { () -> Bool in
-      self.session != nil
+      self.activeSession() != nil
     }
 
     /// Signs a 32-byte digest (hex) with ECDSA P-256. Returns the DER-encoded signature as hex.
     /// The digest is signed as-is (no further hashing), matching OpenZeppelin's P256.verify.
     AsyncFunction("sign") { (tag: String, digestHex: String) throws -> String in
-      guard let context = self.session else { throw NoSessionException() }
+      guard let context = self.activeSession() else { throw NoSessionException() }
       guard let digest = Data(hexString: digestHex), digest.count == 32 else {
         throw InvalidDigestException()
       }
@@ -139,6 +143,24 @@ public class SecureEnclaveModule: Module {
       let attestation = try await DCAppAttestService.shared.attestKey(keyId, clientDataHash: clientDataHash)
       return attestation.base64EncodedString()
     }
+  }
+
+  // MARK: - Session helpers
+
+  /// The current session, or nil once it has expired (which also ends it).
+  private func activeSession() -> LAContext? {
+    guard let context = session, let started = sessionStartedAt else { return nil }
+    if ProcessInfo.processInfo.systemUptime - started > maxSessionDuration {
+      endSession()
+      return nil
+    }
+    return context
+  }
+
+  private func endSession() {
+    session?.invalidate()
+    session = nil
+    sessionStartedAt = nil
   }
 
   // MARK: - Keychain helpers
@@ -200,7 +222,7 @@ final class AppAttestUnavailableException: Exception {
 }
 
 final class NoSessionException: Exception {
-  override var reason: String { "No authenticated drive session. Call beginSession first." }
+  override var reason: String { "No authenticated drive session (none started, ended, or expired). Call beginSession." }
 }
 
 final class InvalidDigestException: Exception {

@@ -1,6 +1,5 @@
 import { LocationService, SpeedRecord } from './LocationService';
 import { getMerkleService } from './MerkleService';
-import { getCryptoService } from './CryptoService';
 import { getBlockchainService } from './BlockchainService';
 import * as Location from 'expo-location';
 
@@ -8,9 +7,9 @@ import * as Location from 'expo-location';
  * Main service that orchestrates GPS tracking, crypto signing, and Merkle tree construction
  */
 class SpeedTrackingServiceClass {
+  private lastCommittedTimestamp = 0;
   private locationService = LocationService.getInstance();
   private merkleService = getMerkleService();
-  private cryptoService = getCryptoService();
   private isInitialized = false;
 
   async initialize(): Promise<boolean> {
@@ -48,21 +47,21 @@ class SpeedTrackingServiceClass {
     
     this.locationService.processLocationUpdate = async (location: Location.LocationObject) => {
       try {
-        // Call original processing
-        await originalProcess(location);
-
-        // For Merkle tree, we track all records including when stopped (complete legal coverage)
-        // This ensures all time periods are recorded for legal protection
-        if ((this.locationService as any).previousRecord) {
-          const record = (this.locationService as any).previousRecord;
+        // Commit exactly the record this update produced (null if it was rejected). Reading a
+        // shared "previous record" instead could commit stale duplicates, or skip a record when
+        // two GPS callbacks overlap.
+        const record = await originalProcess(location);
+        if (record && record.timestamp !== this.lastCommittedTimestamp) {
+          this.lastCommittedTimestamp = record.timestamp;
           this.merkleService.addRecord(record);
           
           // Process for XP rewards and data aggregation
           await this.processRecordForXP(record, location);
         }
-
+        return record;
       } catch (error) {
         console.error('Failed to process location update:', error);
+        return null;
       }
     };
   }
@@ -245,59 +244,14 @@ class SpeedTrackingServiceClass {
     }
   }
 
-  async validateDataIntegrity(): Promise<{
-    isValid: boolean;
-    issues: string[];
-  }> {
-    try {
-      const issues: string[] = [];
-
-      // Get recent records
-      const records = await this.locationService.getRecords();
-      
-      // For now, just check that records exist and have signatures
-      // The signature verification would need the original signing context
-      if (records.length === 0) {
-        issues.push('No speed records found');
-      } else {
-        let validCount = 0;
-        for (const record of records) {
-          if (record.signature && record.signature.length > 0) {
-            validCount++;
-          } else {
-            issues.push(`Missing signature for record at ${new Date(record.timestamp).toISOString()}`);
-          }
-        }
-        
-        if (validCount === records.length) {
-          console.log(`All ${validCount} records have valid signatures`);
-        }
-      }
-
-      return {
-        isValid: issues.length === 0,
-        issues
-      };
-
-    } catch (error) {
-      console.error('Failed to validate data integrity:', error);
-      return {
-        isValid: false,
-        issues: [`Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`]
-      };
-    }
-  }
-
   async exportDataForTimeRange(startTime: number, endTime: number): Promise<{
     records: SpeedRecord[];
     checkpoints: any[];
     proofs: any[];
-    attestation: any;
   } | null> {
     try {
       const records = await this.locationService.getRecords(startTime, endTime);
       const checkpoints = await this.merkleService.getCheckpoints(startTime, endTime);
-      const attestation = await this.cryptoService.getDeviceAttestation();
 
       // Generate proofs for each checkpoint
       const proofs = [];
@@ -326,7 +280,6 @@ class SpeedTrackingServiceClass {
         records,
         checkpoints,
         proofs,
-        attestation
       };
 
     } catch (error) {

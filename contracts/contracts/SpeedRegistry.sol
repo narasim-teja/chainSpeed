@@ -25,6 +25,9 @@ contract SpeedRegistry {
     uint256 public constant MAX_WINDOW = 10 minutes;
     /// About 100 mph. Distances above this for the window are physically implausible.
     uint256 public constant MAX_METERS_PER_SECOND = 45;
+    /// GPS jitter allowances when checking distance against the checkpoint's average speed.
+    uint256 public constant SPEED_TOLERANCE_MPH = 5;
+    uint256 public constant DISTANCE_TOLERANCE_METERS = 50;
 
     /// What the device signs (together with chain, contract and device address).
     struct CheckpointInput {
@@ -117,6 +120,7 @@ contract SpeedRegistry {
     error StaleCheckpoint();
     error ImpossibleDistance();
     error InconsistentSpeeds();
+    error DistanceExceedsAverageSpeed();
     error InvalidSignature();
     error CheckpointNotFound();
 
@@ -206,8 +210,16 @@ contract SpeedRegistry {
 
         // Physical plausibility.
         if (cp.minSpeed > cp.avgSpeed || cp.avgSpeed > cp.maxSpeed) revert InconsistentSpeeds();
-        if (uint256(cp.distanceMeters) > uint256(cp.endTime - cp.startTime) * MAX_METERS_PER_SECOND) {
-            revert ImpossibleDistance();
+        uint256 window = cp.endTime - cp.startTime;
+        if (uint256(cp.distanceMeters) > window * MAX_METERS_PER_SECOND) revert ImpossibleDistance();
+        // The distance must match the checkpoint's AVERAGE speed (what XP uses to decide "safe"),
+        // so a "0 mph" average cannot carry 27 km of safe miles. 1 mph = 0.44704 m/s. The 5 mph and
+        // 50 m allowances absorb GPS jitter at a standstill and very short windows.
+        if (
+            uint256(cp.distanceMeters) * 100_000 >
+            (uint256(cp.avgSpeed) + SPEED_TOLERANCE_MPH) * 44_704 * window + DISTANCE_TOLERANCE_METERS * 100_000
+        ) {
+            revert DistanceExceedsAverageSpeed();
         }
 
         // verifySolidity, not verify: P256.verify first tries the RIP-7212 precompile at 0x100.
@@ -275,13 +287,17 @@ contract SpeedRegistry {
         return deviceCheckpoints[device][index - 1];
     }
 
-    /// @notice OpenZeppelin standard-tree leaf: keccak256(keccak256(abi.encode(record))).
-    function recordLeafHash(RecordLeaf calldata record) public pure returns (bytes32) {
-        return keccak256(bytes.concat(keccak256(abi.encode(record))));
+    /**
+     * @notice OpenZeppelin standard-tree leaf: keccak256(keccak256(abi.encode(device, record))).
+     * The device is part of every leaf, so a root anchored by another device cannot be used to
+     * pass this device's records off as theirs.
+     */
+    function recordLeafHash(address device, RecordLeaf calldata record) public pure returns (bytes32) {
+        return keccak256(bytes.concat(keccak256(abi.encode(device, record))));
     }
 
     /**
-     * @notice True if `record` is one of the records `device` committed to in the checkpoint
+     * @notice True if `record` is one of the records `device` committed to (leaves bind the device) in the checkpoint
      * anchored with `merkleRoot`, and its timestamp lies inside that checkpoint's window
      * (with one second of tolerance for the window's rounding to whole seconds).
      */
@@ -295,7 +311,7 @@ contract SpeedRegistry {
         uint256 startMs = (uint256(c.startTime) - 1) * 1000;
         uint256 endMs = (uint256(c.endTime) + 1) * 1000;
         if (record.timestampMs < startMs || record.timestampMs > endMs) return false;
-        return MerkleProof.verifyCalldata(proof, merkleRoot, recordLeafHash(record));
+        return MerkleProof.verifyCalldata(proof, merkleRoot, recordLeafHash(device, record));
     }
 
     function requestProofForLegal(address device, bytes32 merkleRoot) external {

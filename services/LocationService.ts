@@ -258,14 +258,17 @@ class LocationServiceClass {
     }
   }
 
-  async processLocationUpdate(location: Location.LocationObject): Promise<void> {
+  /** Returns the record this update created, or null if it was rejected or failed. */
+  async processLocationUpdate(location: Location.LocationObject): Promise<SpeedRecord | null> {
     try {
       // Get speed from GPS or calculate from position change
       let speed = 0;
       
-      // Check if GPS provides speed
-      if (location.coords.speed !== null && location.coords.speed !== undefined) {
-        speed = Math.max(0, location.coords.speed * 2.237); // Convert m/s to mph, ensure non-negative
+      // iOS reports speed -1 when it has no valid speed: that is "unknown", not 0 mph, so fall
+      // back to the speed implied by the coordinates instead of recording a stop (F15).
+      const gpsSpeed = location.coords.speed;
+      if (gpsSpeed !== null && gpsSpeed !== undefined && gpsSpeed >= 0) {
+        speed = gpsSpeed * 2.237; // m/s to mph
       } else if (this.previousRecord) {
         // Calculate speed from position change
         const timeDiff = Date.now() - this.previousRecord.timestamp;
@@ -298,16 +301,13 @@ class LocationServiceClass {
       };
 
       // Validate record
-      console.log('Processing location update:', {
-        speed: speed,
-        accuracy: record.accuracy,
-        coords: [record.latitude, record.longitude]
-      });
+      // Never log coordinates: device logs are readable outside the app (F13).
+      console.log('Processing location update:', { speed, accuracy: record.accuracy });
       
       const isValid = await this.validateRecord(record as SpeedRecord);
       if (!isValid) {
         console.log('Record validation failed - skipping record creation');
-        return;
+        return null;
       }
 
       // Generate signature
@@ -329,9 +329,10 @@ class LocationServiceClass {
       
       // Store last known speed for UI updates
       await setSecureJSON('last_known_speed', { speed, timestamp: Date.now() });
-
+      return signedRecord;
     } catch (error) {
       console.error('Failed to process location update:', error);
+      return null;
     }
   }
 
@@ -345,8 +346,9 @@ class LocationServiceClass {
       const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
       const filteredRecords = records.filter(r => r.timestamp > oneDayAgo);
 
-      // Limit total records to prevent excessive storage (keep last 2880 records = 24h at 1/sec)
-      const maxRecords = 2880; // 24 hours * 60 minutes * 2 (every 30 seconds average)
+      // A rolling buffer for live stats: 2880 records is about 48 minutes at one per second.
+      // Proofs do not depend on it; they use the per-checkpoint bundles kept for 30 days.
+      const maxRecords = 2880;
       const trimmedRecords = filteredRecords.slice(-maxRecords);
 
       await setSecureJSON(STORAGE_KEY, trimmedRecords);

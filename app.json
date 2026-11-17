@@ -24,10 +24,10 @@
           "NSAllowsArbitraryLoads": false,
           "NSAllowsLocalNetworking": true
         },
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "ChainSpeed needs location access to record your driving speed for legal protection against false speeding tickets.",
-        "NSLocationWhenInUseUsageDescription": "ChainSpeed needs location access to record your driving speed for legal protection against false speeding tickets.",
-        "NSLocationAlwaysUsageDescription": "ChainSpeed needs background location access to continuously record your driving speed even when the app is not active.",
-        "NSMotionUsageDescription": "ChainSpeed uses motion sensors to verify and validate GPS speed readings for enhanced accuracy.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "ChainSpeed uses your location to record your driving speed in signed checkpoints.",
+        "NSLocationWhenInUseUsageDescription": "ChainSpeed uses your location to record your driving speed in signed checkpoints.",
+        "NSLocationAlwaysUsageDescription": "ChainSpeed uses your location to record your driving speed during a drive you start.",
+        "NSMotionUsageDescription": "ChainSpeed reads motion sensors during a drive.",
         "UIBackgroundModes": ["location", "background-fetch", "background-processing"]
       }
     },

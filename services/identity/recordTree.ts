@@ -1,4 +1,4 @@
-import { concat, encodeAbiParameters, keccak256, type Hex } from 'viem';
+import { concat, encodeAbiParameters, keccak256, type Address, type Hex } from 'viem';
 
 /**
  * Speed records committed to by a checkpoint's Merkle root.
@@ -8,6 +8,9 @@ import { concat, encodeAbiParameters, keccak256, type Hex } from 'viem';
  * (keccak256(keccak256(abi.encode(fields)))), which keeps a leaf from ever being read as an
  * internal node, and internal nodes hash sorted pairs. Odd nodes are never duplicated, so two
  * different record sets cannot share a root (F9).
+ *
+ * Every leaf also includes the device (wallet) address, so another device that anchors the same
+ * root cannot pass these records off as its own.
  *
  * Every leaf includes a random 32-byte salt kept only on the device. Revealing one record's
  * proof exposes sibling hashes, and without the salt a sibling covering a GPS point could be
@@ -61,12 +64,12 @@ export function toLeafValues(record: LeafRecord): RecordLeafValues {
   };
 }
 
-/** Matches SpeedRegistry.recordLeafHash and OpenZeppelin's standardLeafHash. */
-export function recordLeaf(record: LeafRecord): Hex {
+/** Matches SpeedRegistry.recordLeafHash(device, record) and OpenZeppelin's standardLeafHash. */
+export function recordLeaf(device: Address, record: LeafRecord): Hex {
   const values = toLeafValues(record);
   const encoded = encodeAbiParameters(
-    [{ type: 'tuple', components: RECORD_LEAF_COMPONENTS }],
-    [values]
+    [{ type: 'address' }, { type: 'tuple', components: RECORD_LEAF_COMPONENTS }],
+    [device, values]
   );
   return keccak256(keccak256(encoded));
 }
@@ -80,9 +83,9 @@ function hashPair(a: Hex, b: Hex): Hex {
  * leaves sorted by hash and stored at the end, each parent at i with children 2i+1, 2i+2.
  * tree[0] is the root.
  */
-export function buildRecordTree(records: LeafRecord[]): { root: Hex; tree: Hex[] } {
+export function buildRecordTree(device: Address, records: LeafRecord[]): { root: Hex; tree: Hex[] } {
   if (records.length === 0) throw new Error('Cannot build a tree with no records');
-  const leaves = records.map(recordLeaf).sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? -1 : 1));
+  const leaves = records.map((r) => recordLeaf(device, r)).sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? -1 : 1));
   const tree: Hex[] = new Array(2 * leaves.length - 1);
   leaves.forEach((leaf, i) => {
     tree[tree.length - 1 - i] = leaf;

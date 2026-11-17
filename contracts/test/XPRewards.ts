@@ -62,26 +62,27 @@ describe("XPRewards v2", function () {
 
   it("accumulates safe distance across short checkpoints (each under a mile)", async function () {
     // v1 computed distanceMeters / 1609 per checkpoint, so every 30-second checkpoint earned 0.
-    for (let i = 0; i < 3; i++) await drive({ meters: 1_300, avg: 60 });
+    // 30 s at 70 mph is about 939 m; three of them pass one mile only when added together.
+    for (let i = 0; i < 3; i++) await drive({ meters: 930, avg: 70 });
     await xp.connect(wallet).processCheckpointsForXP();
     const u = await xp.getUserXP(wallet.address);
-    expect(u.safeMiles).to.equal(2n); // 3,900 m
-    expect(u.totalXP).to.equal(2n);
+    expect(u.safeMiles).to.equal(1n); // 2,790 m
+    expect(u.totalXP).to.equal(1n);
   });
 
   it("counts unsafe checkpoints toward lifetime miles but not XP", async function () {
-    await drive({ seconds: 600, meters: 26_000, avg: 80 });
+    await drive({ seconds: 600, meters: 21_000, avg: 80 });
     await xp.connect(wallet).processCheckpointsForXP();
     const u = await xp.getUserXP(wallet.address);
-    expect(u.lifetimeMiles).to.equal(16n);
+    expect(u.lifetimeMiles).to.equal(13n);
     expect(u.totalXP).to.equal(0n);
   });
 
   it("F18: always advances the cursor, so a second call counts nothing twice", async function () {
-    await drive({ seconds: 600, meters: 26_000, avg: 80 }); // earns no XP: v1 left the cursor behind here
+    await drive({ seconds: 600, meters: 21_000, avg: 80 }); // earns no XP: v1 left the cursor behind here
     await xp.connect(wallet).processCheckpointsForXP();
     await xp.connect(wallet).processCheckpointsForXP();
-    expect((await xp.getUserXP(wallet.address)).lifetimeMiles).to.equal(16n);
+    expect((await xp.getUserXP(wallet.address)).lifetimeMiles).to.equal(13n);
     expect((await xp.userXP(wallet.address)).lastCheckpointProcessed).to.equal(1n);
   });
 
@@ -105,14 +106,14 @@ describe("XPRewards v2", function () {
 
   it("bases streaks on the day of the drive, not the day XP is claimed", async function () {
     await startOfNextDay();
-    await drive({ meters: 1_300, avg: 60 });
+    await drive({ meters: 930, avg: 70 });
     await startOfNextDay();
-    await drive({ meters: 1_300, avg: 60 });
+    await drive({ meters: 930, avg: 70 });
     await time.increase(3 * DAY); // claim days later, all at once
     await xp.connect(wallet).processCheckpointsForXP();
     const u = await xp.getUserXP(wallet.address);
     expect(u.currentStreak).to.equal(2n);
-    expect(u.totalXP).to.equal(1n + (await xp.DAILY_STREAK_BONUS())); // 2,600 m = 1 mile, plus the bonus
+    expect(u.totalXP).to.equal(1n + (await xp.DAILY_STREAK_BONUS())); // 1,860 m = 1 mile, plus the bonus
   });
 
   it("redemption burns XP and issues no code", async function () {

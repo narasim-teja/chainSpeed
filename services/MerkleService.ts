@@ -1,6 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SpeedRecord } from './LocationService';
-import { getCryptoService, SignedData } from './CryptoService';
 import { getBlockchainService } from './BlockchainService';
 import { getSecureJSON, setSecureJSON } from './storage/secureStorage';
 import { CHECKPOINT_RETENTION_MS, staleBundleKeys } from './storage/retention';
@@ -8,6 +7,7 @@ import { buildRecordTree, recordLeaf, recordProof, verifyRecordProof, type LeafR
 
 /** Inclusion proof for one record, verifiable on chain with SpeedRegistry.verifyRecord. */
 export interface MerkleProof {
+  device: string;
   leaf: string;
   path: string[];
   root: string;
@@ -23,8 +23,7 @@ export interface CheckpointData {
   minSpeed: number;
   distanceMeters: number;
   recordCount: number;
-  deviceAttestation: any;
-  signature: string;
+  device: string; // the wallet the tree's leaves are bound to
 }
 
 const CHECKPOINT_STORAGE_KEY = 'merkle_checkpoints';
@@ -32,10 +31,23 @@ const CHECKPOINT_INTERVAL = 30000; // 30 seconds in milliseconds
 
 class MerkleServiceClass {
   private pendingRecords: SpeedRecord[] = [];
+  private creation: Promise<unknown> = Promise.resolve();
   private lastCheckpointTime = 0;
 
   constructor() {
     this.startCheckpointTimer();
+    // Apply retention at startup too, so old records are deleted even if no new drive happens.
+    // Queued like checkpoint creation, so it can never prune a bundle that is being written.
+    this.creation = this.pruneExpired().catch((error) => console.warn('Retention cleanup failed:', error));
+  }
+
+  /** Drops checkpoints past the retention period, and the record bundles behind them (F20). */
+  private async pruneExpired(): Promise<void> {
+    const checkpoints = (await getSecureJSON<CheckpointData[]>(CHECKPOINT_STORAGE_KEY)) ?? [];
+    const cutoff = Date.now() - CHECKPOINT_RETENTION_MS;
+    const kept = checkpoints.filter((c) => c.endTime > cutoff);
+    if (kept.length !== checkpoints.length) await setSecureJSON(CHECKPOINT_STORAGE_KEY, kept);
+    await this.pruneBundles(new Set(kept.map((c) => c.merkleRoot)));
   }
 
   private startCheckpointTimer(): void {
@@ -53,73 +65,64 @@ class MerkleServiceClass {
     // The timer will handle checkpoint creation automatically
   }
 
-  private async createCheckpoint(): Promise<CheckpointData | null> {
+  /** Checkpoints are created one at a time, so the 30-second timer and Stop can never overlap. */
+  private createCheckpoint(): Promise<CheckpointData | null> {
+    const run = this.creation.then(() => this.createCheckpointNow());
+    this.creation = run.catch(() => null);
+    return run;
+  }
+
+  private async createCheckpointNow(): Promise<CheckpointData | null> {
+    if (this.pendingRecords.length === 0) return null;
+
+    // Leaves are bound to the device (see recordTree.ts), so the wallet must be known.
+    const device = await getBlockchainService().getDeviceAddress();
+    if (!device) {
+      console.warn('No wallet connected: records are held until a device wallet is available');
+      return null;
+    }
+
+    // Take the batch before anything else awaits: records that arrive while this checkpoint is
+    // being stored and submitted belong to the next checkpoint instead of being dropped.
+    const batch = this.pendingRecords;
+    this.pendingRecords = [];
+
     try {
-      if (this.pendingRecords.length === 0) return null;
+      const merkleTree = buildRecordTree(device, batch.map(toLeafRecord));
+      const stats = this.calculateStats(batch);
+      const firstRecordTime = batch[0].timestamp;
+      const lastRecordTime = batch[batch.length - 1].timestamp;
+      const endTime = lastRecordTime === firstRecordTime ? firstRecordTime + 1000 : lastRecordTime;
 
-      // Build Merkle tree from pending records
-      const merkleTree = buildRecordTree(this.pendingRecords.map(toLeafRecord));
-
-      // Calculate checkpoint statistics
-      const stats = this.calculateStats(this.pendingRecords);
-
-      // Create checkpoint data
-      const firstRecordTime = this.pendingRecords[0].timestamp;
-      const lastRecordTime = this.pendingRecords[this.pendingRecords.length - 1].timestamp;
-      
-      // Ensure endTime is always greater than startTime (smart contract requirement)
-      const endTime = lastRecordTime === firstRecordTime ? firstRecordTime + 1000 : lastRecordTime; // Add 1 second if they're equal
-      
-      const checkpointData: Omit<CheckpointData, 'signature'> = {
+      const checkpoint: CheckpointData = {
         merkleRoot: merkleTree.root,
+        device,
         startTime: firstRecordTime,
-        endTime: endTime,
+        endTime,
         avgSpeed: stats.avgSpeed,
         maxSpeed: stats.maxSpeed,
         minSpeed: stats.minSpeed,
         distanceMeters: stats.distance,
-        recordCount: this.pendingRecords.length,
-        deviceAttestation: await getCryptoService().getDeviceAttestation()
+        recordCount: batch.length,
       };
 
-      // Sign the checkpoint
-      const signedCheckpoint = await getCryptoService().signData(checkpointData);
-      const finalCheckpoint: CheckpointData = {
-        ...checkpointData,
-        signature: signedCheckpoint.signature
-      };
-
-      // Store checkpoint and tree
-      await this.storeCheckpoint(finalCheckpoint, merkleTree.tree, this.pendingRecords);
-
-      // Submit checkpoint to blockchain
+      // A root whose records cannot be kept proves nothing, so don't anchor it (fail closed).
       try {
-        const blockchainService = getBlockchainService();
-        const txHash = await blockchainService.submitCheckpoint(finalCheckpoint);
-        if (txHash) {
-          console.log('Checkpoint submitted to blockchain:', {
-            root: finalCheckpoint.merkleRoot.substring(0, 8) + '...',
-            txHash: txHash.substring(0, 8) + '...',
-            records: finalCheckpoint.recordCount,
-            timespan: (finalCheckpoint.endTime - finalCheckpoint.startTime) / 1000 + 's'
-          });
-        }
+        await this.storeCheckpoint(checkpoint, merkleTree.tree, batch);
       } catch (error) {
-        console.error('Failed to submit checkpoint to blockchain:', error);
+        console.error('Could not store checkpoint records; not anchoring this checkpoint:', error);
+        return null;
       }
 
+      const txHash = await getBlockchainService().submitCheckpoint(checkpoint);
       console.log('Checkpoint created:', {
-        root: finalCheckpoint.merkleRoot,
-        records: finalCheckpoint.recordCount,
-        timespan: (finalCheckpoint.endTime - finalCheckpoint.startTime) / 1000 + 's'
+        root: checkpoint.merkleRoot.substring(0, 10) + '...',
+        records: checkpoint.recordCount,
+        timespan: (checkpoint.endTime - checkpoint.startTime) / 1000 + 's',
+        result: txHash ? txHash.substring(0, 10) + '...' : 'unanchored',
       });
-
-      // Clear pending records
-      this.pendingRecords = [];
       this.lastCheckpointTime = Date.now();
-
-      return finalCheckpoint;
-
+      return checkpoint;
     } catch (error) {
       console.error('Failed to create checkpoint:', error);
       return null;
@@ -217,6 +220,7 @@ class MerkleServiceClass {
 
     } catch (error) {
       console.error('Failed to store checkpoint:', error);
+      throw error;
     }
   }
 
@@ -268,6 +272,8 @@ class MerkleServiceClass {
       }
       const tree = JSON.parse(treeData);
       if (!Array.isArray(tree)) return null; // a tree from before the standard-tree format
+      const device = (await this.getCheckpoints()).find((c) => c.merkleRoot === merkleRoot)?.device;
+      if (!device) return null; // a tree from before leaves were bound to the device
 
       const target = records.find((r) => Math.abs(r.timestamp - recordTimestamp) < 1000);
       if (!target || !target.salt) {
@@ -275,12 +281,19 @@ class MerkleServiceClass {
         return null;
       }
       const record = toLeafRecord(target);
-      const leaf = recordLeaf(record);
-      return { leaf, path: recordProof(tree, leaf), root: merkleRoot, record };
+      const leaf = recordLeaf(device as `0x${string}`, record);
+      return { device, leaf, path: recordProof(tree, leaf), root: merkleRoot, record };
     } catch (error) {
       console.error('Failed to generate Merkle proof:', error);
       return null;
     }
+  }
+
+  /** A proof for the first record of a checkpoint, used to spot-check it on chain. */
+  public async generateSampleProof(merkleRoot: string): Promise<MerkleProof | null> {
+    const records = await getSecureJSON<SpeedRecord[]>(`records_${merkleRoot}`);
+    const first = records?.find((r) => r.salt);
+    return first ? this.generateMerkleProof(first.timestamp, merkleRoot) : null;
   }
 
   /** Local check of a proof; SpeedRegistry.verifyRecord is the authoritative one. */

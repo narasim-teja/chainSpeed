@@ -3,12 +3,17 @@ import { concat, hexToBytes, sha256, type Address, type Hex } from 'viem';
 import SecureEnclave from '../../modules/secure-enclave';
 import { IDENTITY_CONFIG } from '../../constants/Blockchain';
 
-/** Keychain tag of the Secure Enclave key that signs checkpoints. */
+/** Keychain tag of the first registration's key; later registrations get their own tag. */
 export const SIGNING_KEY_TAG = 'com.narasimha.chainspeed.checkpoint-signing.v2';
+const SIGNING_KEY_TAG_PREFIX = 'com.narasimha.chainspeed.checkpoint-signing.v2.';
+
+/** The tag of the key currently registered on chain (set when an identity is loaded or created). */
+let activeKeyTag: string = SIGNING_KEY_TAG;
 const STATE_KEY = 'chainspeed.deviceIdentity.v2';
 
 export interface DeviceIdentity {
   wallet: Address;
+  keyTag?: string; // absent for the first registration, which used SIGNING_KEY_TAG
   enclavePublicKey: Hex;
   appAttestKeyId: string;
   keyHash: Hex;
@@ -42,8 +47,10 @@ export async function getDeviceIdentity(wallet: Address): Promise<DeviceIdentity
   if (!stored) return null;
   const identity = JSON.parse(stored) as DeviceIdentity;
   if (identity.wallet.toLowerCase() !== wallet.toLowerCase()) return null;
-  const currentKey = SecureEnclave.getPublicKey(SIGNING_KEY_TAG);
+  const tag = identity.keyTag ?? SIGNING_KEY_TAG;
+  const currentKey = SecureEnclave.getPublicKey(tag);
   if (!currentKey || currentKey.toLowerCase() !== identity.enclavePublicKey.toLowerCase()) return null;
+  activeKeyTag = tag;
   return identity;
 }
 
@@ -64,7 +71,9 @@ export async function registerDevice(
   }
   if (!IDENTITY_CONFIG.registrarUrl) throw new Error('EXPO_PUBLIC_REGISTRAR_URL is not set');
 
-  const enclavePublicKey = await SecureEnclave.createKey(SIGNING_KEY_TAG, true);
+  // A new key under its own tag: any existing key keeps working until this one is registered.
+  const keyTag = SIGNING_KEY_TAG_PREFIX + Date.now();
+  const enclavePublicKey = await SecureEnclave.createKey(keyTag, true);
 
   const challengeRes = await fetch(`${IDENTITY_CONFIG.registrarUrl}/v1/challenge`, { method: 'POST' });
   if (!challengeRes.ok) throw new Error(`Could not get a registration challenge (${challengeRes.status})`);
@@ -97,10 +106,18 @@ export async function registerDevice(
     body: JSON.stringify({ challenge, keyId, attestation, enclavePublicKey, wallet }),
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`Device registration failed (${res.status}): ${JSON.stringify(body)}`);
+  if (!res.ok) {
+    // Delete the new key only when the server definitively rejected it. On a 5xx the registry may
+    // already hold it (the transaction can land after the server gave up waiting); the Track
+    // screen compares the local key with the chain and asks to register again if they differ.
+    if (res.status >= 400 && res.status < 500) SecureEnclave.deleteKey(keyTag);
+    throw new Error(`Device registration failed (${res.status}): ${JSON.stringify(body)}`);
+  }
 
+  const previous = await SecureStore.getItemAsync(STATE_KEY);
   const identity: DeviceIdentity = {
     wallet,
+    keyTag,
     enclavePublicKey,
     appAttestKeyId: keyId,
     keyHash: body.keyHash,
@@ -109,6 +126,12 @@ export async function registerDevice(
     registeredAt: new Date().toISOString(),
   };
   await SecureStore.setItemAsync(STATE_KEY, JSON.stringify(identity));
+  activeKeyTag = keyTag;
+  // The on-chain key is now the new one, so the old key can no longer sign anything accepted.
+  if (previous) {
+    const oldTag = (JSON.parse(previous) as DeviceIdentity).keyTag ?? SIGNING_KEY_TAG;
+    if (oldTag !== keyTag) SecureEnclave.deleteKey(oldTag);
+  }
   return identity;
 }
 
@@ -127,5 +150,5 @@ export function hasDriveSession(): boolean {
 
 /** Signs a checkpoint digest with the enclave key (requires an active drive session). */
 export function signWithDeviceKey(digest: Hex): Promise<Hex> {
-  return SecureEnclave.sign(SIGNING_KEY_TAG, digest);
+  return SecureEnclave.sign(activeKeyTag, digest);
 }

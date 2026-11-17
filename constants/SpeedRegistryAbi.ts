@@ -28,6 +28,11 @@ export const SPEED_REGISTRY_ABI = [
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "DistanceExceedsAverageSpeed",
+    "type": "error"
+  },
+  {
     "inputs": [
       {
         "internalType": "bytes32",
@@ -292,6 +297,19 @@ export const SPEED_REGISTRY_ABI = [
   },
   {
     "inputs": [],
+    "name": "DISTANCE_TOLERANCE_METERS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "MAX_CLOCK_SKEW",
     "outputs": [
       {
@@ -332,6 +350,19 @@ export const SPEED_REGISTRY_ABI = [
   {
     "inputs": [],
     "name": "MAX_WINDOW",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "SPEED_TOLERANCE_MPH",
     "outputs": [
       {
         "internalType": "uint256",
@@ -963,6 +994,11 @@ export const SPEED_REGISTRY_ABI = [
   },
   {
     "inputs": [
+      {
+        "internalType": "address",
+        "name": "device",
+        "type": "address"
+      },
       {
         "components": [
           {
