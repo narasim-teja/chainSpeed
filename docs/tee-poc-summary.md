@@ -2,7 +2,7 @@
 
 > **Correction (November 2026).** An earlier version of this document claimed a working Secure Enclave implementation ("not a simulation", "Apple-signed certificates prove key authenticity", "ready for hackathon demonstration"). Those claims were wrong. The earlier version is in git history; this page replaces it with what the code actually does.
 
-## What `services/TEECryptoService.ts` does today
+## What `services/TEECryptoService.ts` did (removed; replaced by `modules/secure-enclave`)
 
 | Claimed | Actual |
 | --- | --- |
@@ -17,7 +17,7 @@
 
 The iPhone 14 log in the earlier version was real output, but the public key it showed (`04a4acb6...`) is the hash of source constants described above, not a hardware key.
 
-## What a real implementation needs
+## What a real implementation needs (written before it was built; see identity-design.md for what exists, which differs: e.g. freshness comes from block time, not a server nonce)
 
 1. **A real Secure Enclave key.** A small native module calling `SecKeyCreateRandomKey` with `kSecAttrTokenIDSecureEnclave` and an access control of `biometryCurrentSet` (or `userPresence`). Sign with `SecKeyCreateSignature` using `ecdsaSignatureMessageX962SHA256`. Export the public key and verify ECDSA P-256 off device.
 2. **Attestation and registration.** Use Apple App Attest to show the key belongs to a genuine device running this app, verified server-side against Apple's root, and bind the key to the user's account.

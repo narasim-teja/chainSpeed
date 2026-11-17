@@ -1,6 +1,6 @@
 # **ChainSpeed Technical Architecture Document** 🏗️
 
-> **Status note (November 2026):** This is the original pre-hackathon vision document. Most of what it describes was never built, including key registration on chain, `ProofVerifier.sol`, `RewardPool.sol`, gas sponsorship, IPFS/Arweave encryption, zero-knowledge proofs, and the verification website. See the [README](../README.md#status-at-a-glance) for the current state.
+> **Status note (November 2026):** This is the original pre-hackathon vision document. Most of what it describes was not built as described. On-chain key registration and record proofs now exist in a different form (see [identity-design.md](identity-design.md)). `ProofVerifier.sol`, `RewardPool.sol`, gas sponsorship, IPFS/Arweave encryption, zero-knowledge proofs and the verification website were never built. See the [README](../README.md#status-at-a-glance) for the current state.
 
 ## **System Overview**
 

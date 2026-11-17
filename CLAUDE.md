@@ -87,20 +87,16 @@ bun run dev
 - `viem`: Ethereum blockchain interaction library
 - `expo-router`: File-based routing system
 - `expo-location`: GPS tracking and background location services
-- `expo-sensors`: Accelerometer, gyroscope, and magnetometer access
-- `react-native-crypto-js`: Cryptographic signing and hashing
-- `expo-task-manager`: Background task execution
+- `expo-sensors`: Accelerometer readings (logged only, not validated or committed)
+- `@noble/ciphers`: Encryption at rest (`services/storage`)
 
-**Implementation Status (MVP):**
-- ✅ GPS tracking with multi-sensor validation
-- ✅ Software-based signing and attestation system
-- ✅ Merkle tree construction for 30-second checkpoints
-- ✅ TrackingScreen UI for speed monitoring
-- 🔄 Hedera blockchain integration (complete)
-- 🔄 Legal document generation (pending)
+**Status:** see README "Status at a glance" and `docs/security-triage.md` (the source of truth for what is
+and isn't done). Background tracking (TaskManager) is not enabled; tracking runs while the app is active.
 
 **Core Services:**
-- `LocationService`: GPS tracking with background processing
-- `CryptoService`: Software-based signing and device attestation
-- `MerkleService`: 30-second checkpoint creation with proof generation
+- `LocationService`: GPS recording (records encrypted at rest)
+- `MerkleService`: 30-second checkpoints (device-bound, salted record trees) and record proofs
+- `BlockchainService`: Hedera calls; in-order checkpoint queue; serialized wallet transactions
 - `SpeedTrackingService`: Main orchestrator service
+- `services/identity/*`: device registration, checkpoint digest/signing, submission queue, record tree
+- `CryptoService`: legacy software hashing; not evidence, not used for checkpoints
